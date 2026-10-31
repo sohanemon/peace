@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // Run parses argv and dispatches to the appropriate command handler.
@@ -19,95 +22,220 @@ func Run(argv0 string, args []string) error {
 		return err
 	}
 	runtime := Runtime{Config: cfg}
-	name := filepath.Base(argv0)
-	if name != "peace" {
-		return runtime.runAlias(name, args)
-	}
-	if len(args) == 0 {
-		printUsage()
+	cmd := newRootCommand(runtime, filepath.Base(argv0))
+	cmd.SetArgs(args)
+	return executeRoot(cmd)
+}
+
+type cliUsageError struct{ err error }
+
+func (e *cliUsageError) Error() string { return e.err.Error() }
+func (e *cliUsageError) Unwrap() error { return e.err }
+
+func executeRoot(root *cobra.Command) error {
+	command, err := root.ExecuteC()
+	if err == nil {
 		return nil
+	}
+	var usageErr *cliUsageError
+	if errors.As(err, &usageErr) || strings.Contains(err.Error(), "unknown flag") || strings.Contains(err.Error(), "unknown shorthand flag") {
+		if command != nil {
+			return fmt.Errorf("%w\n%s", err, command.UsageString())
+		}
+		return fmt.Errorf("%w\n%s", err, root.UsageString())
+	}
+	return err
+}
+
+func newRootCommand(runtime Runtime, executable string) *cobra.Command {
+	root := &cobra.Command{
+		Use:                        executable,
+		Short:                      "Listen to Quran recitation and control Peace wallpapers",
+		Long:                       "Play Quran recitation, control playback, and set ayah wallpapers.",
+		Example:                    "  peace listen 2:255\n  peace listen 110 --follow --random\n  peace wallpaper next",
+		SilenceUsage:               true,
+		SilenceErrors:              true,
+		SuggestionsMinimumDistance: 2,
+	}
+	root.SetFlagErrorFunc(suggestFlag)
+	root.CompletionOptions.DisableDefaultCmd = true
+	if executable != "peace" {
+		configureAliasRoot(root, runtime, executable)
+		return root
 	}
 
-	action, rest := args[0], args[1:]
-	switch action {
-	case "help", "-h", "--help":
-		printUsage()
-		return nil
-	case "listen":
-		if len(rest) == 1 && (rest[0] == "--help" || rest[0] == "-h") {
-			printUsage()
-			return nil
+	listen := newListenCommand(runtime)
+	root.AddCommand(listen)
+	root.AddCommand(&cobra.Command{Use: "pause", Short: "Pause or resume audio playback", Long: "Toggle pause on the current recitation.", Example: "  peace pause", Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.pause() }})
+	root.AddCommand(&cobra.Command{Use: "stop", Short: "Stop audio playback", Long: "Stop recitation and any pending wallpaper preparation.", Example: "  peace stop", Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.stop() }})
+	root.AddCommand(&cobra.Command{Use: "status", Short: "Show playback status", Long: "Show the current ayah and playback state.", Example: "  peace status", Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.status() }})
+	root.AddCommand(newWallpaperCommand(runtime, "wallpaper", "Set an ayah wallpaper", "  peace wallpaper\n  peace wallpaper next\n  peace wallpaper --random"))
+	for _, action := range []string{"random", "next", "prev"} {
+		action := action
+		short := map[string]string{"random": "Set a random ayah wallpaper", "next": "Show the next ayah wallpaper", "prev": "Show the previous ayah wallpaper"}[action]
+		cmd := &cobra.Command{Use: action, Short: short, Long: short + ".", Example: "  peace " + action, Args: noArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+			randomBackground, _ := cmd.Flags().GetBool("random")
+			return runtime.wallpaper(action, randomBackground)
+		}}
+		addWallpaperFlag(cmd)
+		root.AddCommand(cmd)
+	}
+	root.AddCommand(&cobra.Command{Use: "install", Short: "Install Peace command links", Long: "Install the peace command and convenience links in ~/.local/bin.", Example: "  peace install", Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.installCommands() }})
+	root.AddCommand(&cobra.Command{Use: "__follow", Hidden: true, Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.follow() }})
+	root.AddCommand(&cobra.Command{Use: "__prepare SURAH AYAH", Hidden: true, Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, args []string) error { return runtime.prepare(args) }})
+	for _, action := range []string{"init", "uninstall", "enable", "disable", "logs"} {
+		action := action
+		root.AddCommand(&cobra.Command{Use: action, Hidden: true, Args: cobra.ArbitraryArgs, RunE: func(_ *cobra.Command, args []string) error {
+			return runCommand(filepath.Join(runtime.Config.Home, ".local", "bin", "peace-"+action), args...)
+		}})
+	}
+	return root
+}
+
+func suggestFlag(cmd *cobra.Command, err error) error {
+	fields := strings.Fields(err.Error())
+	if len(fields) < 2 || !strings.Contains(err.Error(), "unknown flag") {
+		return &cliUsageError{err: err}
+	}
+	unknown := strings.TrimLeft(fields[len(fields)-1], "-")
+	best, bestDistance := "", 3
+	cmd.Flags().VisitAll(func(flag *pflag.Flag) {
+		distance := editDistance(unknown, flag.Name)
+		if distance < bestDistance {
+			best, bestDistance = flag.Name, distance
 		}
-		return runtime.listen(rest)
-	case "pause":
-		return runtime.pause()
-	case "stop":
-		return runtime.stop()
-	case "status":
-		return runtime.status()
-	case "install":
-		return runtime.installCommands()
-	case "__follow":
-		return runtime.follow()
-	case "__prepare":
-		return runtime.prepare(rest)
-	case "wallpaper", "random", "next", "prev":
-		wallpaperAction := action
-		randomBackground := false
-		for _, argument := range rest {
-			if argument == "--random" {
-				randomBackground = true
-				continue
+	})
+	if best != "" {
+		return &cliUsageError{err: fmt.Errorf("%w (did you mean --%s?)", err, best)}
+	}
+	return &cliUsageError{err: err}
+}
+
+func noArgs(cmd *cobra.Command, args []string) error {
+	if err := cobra.NoArgs(cmd, args); err != nil {
+		return &cliUsageError{err: err}
+	}
+	return nil
+}
+
+func editDistance(a, b string) int {
+	previous := make([]int, len(b)+1)
+	for i := range previous {
+		previous[i] = i
+	}
+	for i, left := range a {
+		current := make([]int, len(b)+1)
+		current[0] = i + 1
+		for j, right := range b {
+			cost := 0
+			if left != right {
+				cost = 1
 			}
-			if action == "wallpaper" && wallpaperAction == "wallpaper" {
-				wallpaperAction = argument
-				continue
-			}
-			return fmt.Errorf("peace wallpaper: unexpected argument %q", argument)
+			current[j+1] = min(current[j]+1, previous[j+1]+1, previous[j]+cost)
 		}
-		return runtime.wallpaper(wallpaperAction, randomBackground)
-	case "init", "uninstall", "enable", "disable", "logs":
-		return runCommand(filepath.Join(runtime.Config.Home, ".local", "bin", "peace-"+action), rest...)
+		previous = current
+	}
+	return previous[len(b)]
+}
+
+func configureAliasRoot(root *cobra.Command, runtime Runtime, name string) {
+	root.Short = "Peace command alias"
+	switch name {
+	case "peace-listen":
+		cmd := newListenCommand(runtime)
+		cmd.Use = "peace-listen SURAH[:AYAH]"
+		root.Short = cmd.Short
+		root.Long, root.Example, root.Args, root.RunE = cmd.Long, cmd.Example, cmd.Args, cmd.RunE
+		root.Flags().AddFlagSet(cmd.Flags())
+	case "peace-pause":
+		root.Short, root.Long, root.Example = "Pause or resume audio playback", "Toggle pause on the current recitation.", "  peace-pause"
+		root.Args, root.RunE = noArgs, func(*cobra.Command, []string) error { return runtime.pause() }
+	case "peace-stop":
+		root.Short, root.Long, root.Example = "Stop audio playback", "Stop recitation and pending wallpaper preparation.", "  peace-stop"
+		root.Args, root.RunE = noArgs, func(*cobra.Command, []string) error { return runtime.stop() }
+	case "peace-status":
+		root.Short, root.Long, root.Example = "Show playback status", "Show the current ayah and playback state.", "  peace-status"
+		root.Args, root.RunE = noArgs, func(*cobra.Command, []string) error { return runtime.status() }
 	default:
-		return fmt.Errorf("peace: unknown action %q", action)
+		root.RunE = func(*cobra.Command, []string) error { return fmt.Errorf("peace: unknown command name %q", name) }
 	}
 }
 
-func (r Runtime) runAlias(name string, args []string) error {
-	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
-		switch name {
-		case "peace-pause":
-			fmt.Println("Usage: peace pause\nToggle audio pause or resume.")
-		case "peace-stop":
-			fmt.Println("Usage: peace stop\nStop audio and follow preparation.")
-		case "peace-status":
-			fmt.Println("Usage: peace status\nShow the current ayah and playback state.")
-		default:
-			printUsage()
-		}
-		return nil
+func newListenCommand(runtime Runtime) *cobra.Command {
+	options := Options{Reciter: os.Getenv("PEACE_RECITER"), Buffer: 10, Lead: 2, Jobs: 2}
+	if options.Reciter == "" {
+		options.Reciter = "ar.alafasy"
 	}
-	switch name {
-	case "peace-listen":
-		return r.listen(args)
-	case "peace-pause":
-		if len(args) != 0 {
-			return errors.New("peace-pause: unexpected arguments")
-		}
-		return r.pause()
-	case "peace-stop":
-		if len(args) != 0 {
-			return errors.New("peace-stop: unexpected arguments")
-		}
-		return r.stop()
-	case "peace-status":
-		if len(args) != 0 {
-			return errors.New("peace-status: unexpected arguments")
-		}
-		return r.status()
-	default:
-		return fmt.Errorf("peace: unknown command name %q", name)
+	cmd := &cobra.Command{
+		Use:     "listen SURAH[:AYAH|:START-END|:START-]",
+		Short:   "Play Quran recitation",
+		Long:    "Play one ayah, an ayah range, or the rest of a surah. Use --follow to update the wallpaper as playback advances.",
+		Example: "  peace listen 2:255\n  peace listen 18:1-10 --reciter ar.alafasy\n  peace listen 110 --follow --random",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+				return &cliUsageError{err: errors.New("peace listen: ayah reference is required")}
+			}
+			if _, _, _, err := parseReference(args[0]); err != nil {
+				return &cliUsageError{err: err}
+			}
+			return nil
+		},
+		PreRunE: func(_ *cobra.Command, _ []string) error {
+			for _, pair := range []struct {
+				name            string
+				value, min, max int
+			}{{"buffer", options.Buffer, 1, 20}, {"lead", options.Lead, 1, 5}, {"jobs", options.Jobs, 1, 4}} {
+				if pair.value < pair.min || pair.value > pair.max {
+					return &cliUsageError{err: fmt.Errorf("peace listen: --%s must be between %d and %d (example: --%s %d)", pair.name, pair.min, pair.max, pair.name, pair.min)}
+				}
+			}
+			if !safeID(options.Reciter) {
+				return &cliUsageError{err: errors.New("peace listen: invalid reciter ID (example: --reciter ar.alafasy)")}
+			}
+			if options.Random && !options.Follow {
+				return &cliUsageError{err: errors.New("peace listen: --random requires --follow (example: peace listen 110 --follow --random)")}
+			}
+			return nil
+		},
+		RunE: func(_ *cobra.Command, args []string) error {
+			options.Reference = args[0]
+			return runtime.listenOptions(options)
+		},
 	}
+	cmd.Flags().BoolVar(&options.Follow, "follow", false, "Update wallpaper as each ayah plays")
+	cmd.Flags().BoolVar(&options.Random, "random", false, "Choose a random current background (requires --follow)")
+	cmd.Flags().StringVar(&options.Reciter, "reciter", options.Reciter, "Reciter ID")
+	cmd.Flags().IntVar(&options.Buffer, "buffer", 10, "Upcoming ayahs to buffer (1-20)")
+	cmd.Flags().IntVar(&options.Lead, "lead", 2, "Wallpapers to prepare ahead (1-5)")
+	cmd.Flags().IntVar(&options.Jobs, "jobs", 2, "Concurrent wallpaper preparations (1-4)")
+	return cmd
+}
+
+func newWallpaperCommand(runtime Runtime, use, short, example string) *cobra.Command {
+	cmd := &cobra.Command{Use: use + " [random|next|prev]", Short: short, Long: short + ".", Example: example,
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) > 1 {
+				return &cliUsageError{err: fmt.Errorf("peace wallpaper: expected at most one action, got %d", len(args))}
+			}
+			if len(args) == 1 && args[0] != "random" && args[0] != "next" && args[0] != "prev" {
+				return &cliUsageError{err: fmt.Errorf("peace wallpaper: invalid action %q (expected random, next, or prev; example: peace wallpaper next)", args[0])}
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			action := "wallpaper"
+			if len(args) == 1 {
+				action = args[0]
+			}
+			randomBackground, _ := cmd.Flags().GetBool("random")
+			return runtime.wallpaper(action, randomBackground)
+		}}
+	addWallpaperFlag(cmd)
+	return cmd
+}
+
+func addWallpaperFlag(cmd *cobra.Command) {
+	cmd.Flags().Bool("random", false, "Choose a random current background")
 }
 
 func (r Runtime) installCommands() error {
@@ -193,71 +321,6 @@ type commandExit struct{ code int }
 func (e *commandExit) Error() string { return fmt.Sprintf("command exited with status %d", e.code) }
 func (e *commandExit) ExitCode() int { return e.code }
 
-func parseOptions(args []string) (Options, error) {
-	if len(args) == 0 {
-		return Options{}, errors.New("peace listen: ayah reference is required")
-	}
-	o := Options{Reference: args[0], Reciter: os.Getenv("PEACE_RECITER"), Buffer: 10, Lead: 2, Jobs: 2}
-	if o.Reciter == "" {
-		o.Reciter = "ar.alafasy"
-	}
-	for i := 1; i < len(args); {
-		switch args[i] {
-		case "--follow":
-			o.Follow = true
-			i++
-			continue
-		case "--random":
-			o.Random = true
-			i++
-			continue
-		}
-		if i+1 >= len(args) {
-			return Options{}, fmt.Errorf("peace listen: %s requires a value", args[i])
-		}
-		switch args[i] {
-		case "--reciter":
-			o.Reciter = args[i+1]
-		case "--buffer":
-			n, err := strconv.Atoi(args[i+1])
-			if err != nil {
-				return Options{}, errors.New("peace listen: invalid --buffer")
-			}
-			o.Buffer = n
-		case "--lead":
-			n, err := strconv.Atoi(args[i+1])
-			if err != nil {
-				return Options{}, errors.New("peace listen: invalid --lead")
-			}
-			o.Lead = n
-		case "--jobs":
-			n, err := strconv.Atoi(args[i+1])
-			if err != nil {
-				return Options{}, errors.New("peace listen: invalid --jobs")
-			}
-			o.Jobs = n
-		default:
-			return Options{}, fmt.Errorf("peace listen: unknown option %q", args[i])
-		}
-		i += 2
-	}
-	for _, pair := range []struct {
-		name        string
-		n, min, max int
-	}{{"buffer", o.Buffer, 1, 20}, {"lead", o.Lead, 1, 5}, {"jobs", o.Jobs, 1, 4}} {
-		if pair.n < pair.min || pair.n > pair.max {
-			return Options{}, fmt.Errorf("peace listen: --%s must be between %d and %d", pair.name, pair.min, pair.max)
-		}
-	}
-	if !safeID(o.Reciter) {
-		return Options{}, errors.New("peace listen: invalid reciter ID")
-	}
-	if o.Random && !o.Follow {
-		return Options{}, errors.New("peace listen: --random requires --follow")
-	}
-	return o, nil
-}
-
 func safeID(s string) bool {
 	if s == "" {
 		return false
@@ -268,11 +331,4 @@ func safeID(s string) bool {
 		}
 	}
 	return true
-}
-
-func printUsage() {
-	fmt.Println("Usage: peace <action> [options]")
-	fmt.Println("  Actions: listen, pause, stop, status, wallpaper, random, next, prev, install, help")
-	fmt.Println("  Wallpaper: peace wallpaper [random|next|prev] [--random]")
-	fmt.Println("  Follow:    peace listen SURAH[:AYAH] --follow [--random]")
 }

@@ -17,11 +17,7 @@ import (
 
 var referencePattern = regexp.MustCompile(`^([0-9]+)(?::([0-9]+)(?:-([0-9]*))?)?$`)
 
-func (r Runtime) listen(args []string) error {
-	o, err := parseOptions(args)
-	if err != nil {
-		return err
-	}
+func (r Runtime) listenOptions(o Options) error {
 	surah, start, end, err := parseReference(o.Reference)
 	if err != nil {
 		return err
@@ -123,11 +119,11 @@ func (r Runtime) listen(args []string) error {
 func parseReference(ref string) (int, int, int, error) {
 	m := referencePattern.FindStringSubmatch(ref)
 	if m == nil {
-		return 0, 0, 0, fmt.Errorf("peace listen: invalid reference %q (expected SURAH[:AYAH|:START-END|:START-])", ref)
+		return 0, 0, 0, fmt.Errorf("peace listen: invalid reference %q (expected SURAH[:AYAH|:START-END|:START-]; example: peace listen 2:255)", ref)
 	}
 	surah, _ := strconv.Atoi(m[1])
 	if surah < 1 || surah > 114 {
-		return 0, 0, 0, errors.New("peace listen: surah must be between 1 and 114")
+		return 0, 0, 0, errors.New("peace listen: surah must be between 1 and 114 (example: peace listen 2:255)")
 	}
 	start, end := 1, 0
 	if m[2] != "" {

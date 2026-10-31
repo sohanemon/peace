@@ -1,40 +1,38 @@
 # Omapeace
 
-An Omarchy plugin for Quran recitation and ayah wallpaper follow. The plugin owns the listening commands and follow renderer. Follow can use the current background and colors from any active Omarchy theme.
-
-## Develop locally
-
-Copy the plugin into Omarchy's plugin directory, validate it, and enable it:
-
-    mkdir -p ~/.config/omarchy/plugins/io.github.sohanemon.omapeace
-    cp -a "$HOME/Code/omapeace/." ~/.config/omarchy/plugins/io.github.sohanemon.omapeace/
-    omarchy plugin validate ~/.config/omarchy/plugins/io.github.sohanemon.omapeace
-    qmllint -I "$OMARCHY_PATH/shell" ~/.config/omarchy/plugins/io.github.sohanemon.omapeace/BarWidget.qml ~/.config/omarchy/plugins/io.github.sohanemon.omapeace/Panel.qml
-    omarchy plugin enable io.github.sohanemon.omapeace
-
-For changes during development, run the checks against the source folder:
-
-    omarchy plugin validate "$HOME/Code/omapeace"
-    qmllint -I "$OMARCHY_PATH/shell" "$HOME/Code/omapeace/BarWidget.qml" "$HOME/Code/omapeace/Panel.qml"
-
-When the plugin panel loads, it registers the bundled `peace` command and its aliases in `~/.local/bin`. The panel invokes the bundled binary directly, so it works even before that directory is on the shell's `PATH`. This does not install or replace the Peace theme. Omarchy does not run plugin install hooks, so registration happens when the plugin is enabled and its panel loads.
-
-The repository ships a statically linked Linux x86_64 Go command at `bin/peace`; users do not need Go, `curl`, `jq`, `socat`, ImageMagick, Pango, or system fonts. To rebuild it from source on Linux x86_64, run `CGO_ENABLED=0 go build -o bin/peace ./cmd/peace`. Audio playback uses `mpv`, and wallpaper changes use Omarchy's wallpaper command. Text shaping, font data, image decoding, and wallpaper composition are built into the command.
+Quran recitation and ayah wallpaper follow. The plugin owns the listening commands and follow renderer. Follow can use the current background and colors from any active Omarchy theme.
 
 ## Commands
 
-    peace listen 55
-    peace listen 55:5-10 --follow --buffer 6 --lead 2 --jobs 2
-    peace listen 55:5-10 --follow --random
-    peace wallpaper --random
+    peace listen SURAH[:AYAH|:START-END|:START-] [--follow] [--random] [--reciter ID] [--buffer N] [--lead N] [--jobs N]
     peace pause
     peace stop
     peace status
+    peace wallpaper [random|next|prev] [--random]
+    peace install
+
+Aliases (installed in `~/.local/bin`): `peace-listen`, `peace-pause`, `peace-stop`, `peace-status`.
+
+    peace listen 55
+    peace listen 55:5-10 --follow --buffer 6 --lead 2 --jobs 2
+    peace listen 110 --follow --random --reciter ar.alafasy
+    peace wallpaper --random
     peace wallpaper next
+    peace wallpaper prev
+    peace pause
+    peace stop
+    peace status
 
-Follow works with any active Omarchy theme. It starts audio immediately, then caches upcoming audio and renders upcoming ayah wallpapers in parallel within the configured buffer. If an audio cache is late, playback streams that ayah while caching continues. Wallpapers use the current background and active theme colors by default. Pass `--random` with `--follow` or `peace wallpaper` to choose a random background from the active theme, Peace theme, and bundled backgrounds. Files named with a `temp_` or `tmp_` prefix are excluded. Audio text and recitation URLs come from AlQuran Cloud. Listening requires mpv.
+Follow works with any active Omarchy theme. It starts audio immediately, then caches upcoming audio and renders upcoming ayah wallpapers in parallel within the configured buffer. If an audio cache is late, playback streams that ayah while caching continues. Wallpapers use the current background and active theme colors by default. Pass `--random` with `--follow` or `peace wallpaper --random` to choose a random background from the active theme, Peace theme, and bundled backgrounds. Audio text and recitation URLs come from AlQuran Cloud. Listening requires mpv.
 
-## Remove
+## Build and install
 
-    rm -f ~/.local/bin/peace ~/.local/bin/peace-listen ~/.local/bin/peace-pause ~/.local/bin/peace-stop ~/.local/bin/peace-status
-    omarchy plugin disable io.github.sohanemon.omapeace
+The repository ships a statically linked Linux x86_64 Go command at `bin/peace`; users do not need Go, `curl`, `jq`, `socat`, ImageMagick, Pango, or system fonts. To rebuild it from source on Linux x86_64:
+
+    make build          # go build -trimpath -ldflags="-s -w" -o bin/peace ./cmd/peace
+    make install        # go install -trimpath -ldflags="-s -w" ./cmd/peace
+    make clean          # rm -f bin/peace
+    make uninstall      # rm -f "$(GO_BIN)/peace"
+
+Audio playback uses `mpv`, and wallpaper changes use Omarchy's wallpaper command. Text shaping, font data, image decoding, and wallpaper composition are built into the command.
+
