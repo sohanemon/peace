@@ -2,6 +2,22 @@
 
 Quran recitation and ayah wallpaper follow. The plugin owns the listening commands and follow renderer. Follow can use the current background and colors from any active Omarchy theme.
 
+## Install in Omarchy
+
+Install the plugin from its GitHub repository, then enable its bar widget:
+
+```sh
+omarchy plugin add https://github.com/sohanemon/peace --enable
+```
+
+The bar widget runs the compiled binary directly; no extra setup is needed to use it. The binary is at `~/.config/omarchy/plugins/io.github.sohanemon.omapeace/bin/peace` after installation.
+
+Remove the plugin from Omarchy with:
+
+```sh
+omarchy plugin remove io.github.sohanemon.omapeace
+```
+
 ## Commands
 
     peace listen SURAH[:AYAH|:START-END|:START-] [--follow] [--random] [--reciter ID] [--buffer N] [--lead N] [--jobs N]
@@ -32,25 +48,6 @@ make install
 make clean
 make uninstall
 ```
-
-## Install and remove from Omarchy
-
-Install the plugin from its GitHub repository, then enable its bar widget:
-
-```sh
-omarchy plugin add https://github.com/sohanemon/omapeace
-omarchy plugin enable io.github.sohanemon.omapeace
-```
-
-The bar widget runs the compiled binary directly; no extra setup is needed to use it. The binary is at `~/.config/omarchy/plugins/io.github.sohanemon.omapeace/bin/peace` after installation.
-
-Remove the plugin from Omarchy with:
-
-```sh
-omarchy plugin remove io.github.sohanemon.omapeace
-```
-
-Omarchy adds new plugins disabled until enabled. [Omarchy plugin documentation](https://github.com/omacom/omarchy/blob/quattro/docs/omarchy-shell.md#installing-a-third-party-plugin)
 
 Audio playback uses `mpv`, and wallpaper changes use Omarchy's wallpaper command. Text shaping, font data, image decoding, and wallpaper composition are built into the command.
 

@@ -233,7 +233,7 @@ Panel {
       }
     }
     onExited: function(exitCode) {
-      if (exitCode !== 0 && root.statusText === "Checking playback…") root.statusText = "peace command unavailable"
+      if (exitCode !== 0 && root.statusText === "Checking playback…") root.statusText = "Playback status unavailable"
     }
   }
 

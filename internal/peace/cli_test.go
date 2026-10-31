@@ -9,7 +9,7 @@ import (
 func TestRootHelpListsCommands(t *testing.T) {
 	for _, args := range [][]string{nil, {"--help"}, {"-h"}} {
 		var stdout, stderr bytes.Buffer
-		cmd := newRootCommand(Runtime{}, "peace")
+		cmd := newRootCommand(Runtime{})
 		cmd.SetOut(&stdout)
 		cmd.SetErr(&stderr)
 		cmd.SetArgs(args)
@@ -30,7 +30,7 @@ func TestRootHelpListsCommands(t *testing.T) {
 
 func TestListenHelpShowsListenUsageAndExamples(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	cmd := newRootCommand(Runtime{}, "peace")
+	cmd := newRootCommand(Runtime{})
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"listen", "--help"})
@@ -47,7 +47,7 @@ func TestListenHelpShowsListenUsageAndExamples(t *testing.T) {
 
 func TestHelpSubcommandShowsListenHelp(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	cmd := newRootCommand(Runtime{}, "peace")
+	cmd := newRootCommand(Runtime{})
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"help", "listen"})
@@ -62,7 +62,7 @@ func TestHelpSubcommandShowsListenHelp(t *testing.T) {
 
 func TestListenMissingReferenceShowsContextAndUsage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	cmd := newRootCommand(Runtime{}, "peace")
+	cmd := newRootCommand(Runtime{})
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"listen"})
@@ -78,7 +78,7 @@ func TestListenMissingReferenceShowsContextAndUsage(t *testing.T) {
 
 func TestListenInvalidReferenceExplainsExpectedFormat(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	cmd := newRootCommand(Runtime{}, "peace")
+	cmd := newRootCommand(Runtime{})
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"listen", "abc"})
@@ -94,7 +94,7 @@ func TestListenInvalidReferenceExplainsExpectedFormat(t *testing.T) {
 
 func TestUnknownFlagShowsCommandUsage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	cmd := newRootCommand(Runtime{}, "peace")
+	cmd := newRootCommand(Runtime{})
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"listen", "110", "--follw"})
@@ -109,7 +109,7 @@ func TestUnknownFlagShowsCommandUsage(t *testing.T) {
 }
 
 func TestUnknownCommandSuggestsCloseMatch(t *testing.T) {
-	cmd := newRootCommand(Runtime{}, "peace")
+	cmd := newRootCommand(Runtime{})
 	cmd.SetArgs([]string{"liset"})
 
 	err := executeRoot(cmd)
@@ -120,7 +120,7 @@ func TestUnknownCommandSuggestsCloseMatch(t *testing.T) {
 
 func TestRandomListenFlagRequiresFollow(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	cmd := newRootCommand(Runtime{}, "peace")
+	cmd := newRootCommand(Runtime{})
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"listen", "110", "--random"})
@@ -133,7 +133,7 @@ func TestRandomListenFlagRequiresFollow(t *testing.T) {
 
 func TestRuntimeErrorDoesNotPrintUsage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	cmd := newRootCommand(Runtime{}, "peace")
+	cmd := newRootCommand(Runtime{})
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"pause"})
@@ -149,7 +149,7 @@ func TestRuntimeErrorDoesNotPrintUsage(t *testing.T) {
 
 func TestUnexpectedCommandArgumentShowsUsage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	cmd := newRootCommand(Runtime{}, "peace")
+	cmd := newRootCommand(Runtime{})
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"pause", "extra"})

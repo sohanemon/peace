@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -16,13 +15,13 @@ import (
 )
 
 // Run parses argv and dispatches to the appropriate command handler.
-func Run(argv0 string, args []string) error {
-	cfg, err := loadConfig(argv0)
+func Run(args []string) error {
+	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
 	runtime := Runtime{Config: cfg}
-	cmd := newRootCommand(runtime, filepath.Base(argv0))
+	cmd := newRootCommand(runtime)
 	cmd.SetArgs(args)
 	return executeRoot(cmd)
 }
@@ -47,9 +46,9 @@ func executeRoot(root *cobra.Command) error {
 	return err
 }
 
-func newRootCommand(runtime Runtime, executable string) *cobra.Command {
+func newRootCommand(runtime Runtime) *cobra.Command {
 	root := &cobra.Command{
-		Use:                        executable,
+		Use:                        "peace",
 		Short:                      "Listen to Quran recitation and control Peace wallpapers",
 		Long:                       "Play Quran recitation, control playback, and set ayah wallpapers.",
 		Example:                    "  peace listen 2:255\n  peace listen 110 --follow --random\n  peace wallpaper next",
@@ -59,10 +58,6 @@ func newRootCommand(runtime Runtime, executable string) *cobra.Command {
 	}
 	root.SetFlagErrorFunc(suggestFlag)
 	root.CompletionOptions.DisableDefaultCmd = true
-	if executable != "peace" {
-		configureAliasRoot(root, runtime, executable)
-		return root
-	}
 
 	listen := newListenCommand(runtime)
 	root.AddCommand(listen)
@@ -82,12 +77,6 @@ func newRootCommand(runtime Runtime, executable string) *cobra.Command {
 	}
 	root.AddCommand(&cobra.Command{Use: "__follow", Hidden: true, Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.follow() }})
 	root.AddCommand(&cobra.Command{Use: "__prepare SURAH AYAH", Hidden: true, Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, args []string) error { return runtime.prepare(args) }})
-	for _, action := range []string{"init", "uninstall", "enable", "disable", "logs"} {
-		action := action
-		root.AddCommand(&cobra.Command{Use: action, Hidden: true, Args: cobra.ArbitraryArgs, RunE: func(_ *cobra.Command, args []string) error {
-			return runCommand(filepath.Join(runtime.Config.Home, ".local", "bin", "peace-"+action), args...)
-		}})
-	}
 	return root
 }
 
@@ -135,29 +124,6 @@ func editDistance(a, b string) int {
 		previous = current
 	}
 	return previous[len(b)]
-}
-
-func configureAliasRoot(root *cobra.Command, runtime Runtime, name string) {
-	root.Short = "Peace command alias"
-	switch name {
-	case "peace-listen":
-		cmd := newListenCommand(runtime)
-		cmd.Use = "peace-listen SURAH[:AYAH]"
-		root.Short = cmd.Short
-		root.Long, root.Example, root.Args, root.RunE = cmd.Long, cmd.Example, cmd.Args, cmd.RunE
-		root.Flags().AddFlagSet(cmd.Flags())
-	case "peace-pause":
-		root.Short, root.Long, root.Example = "Pause or resume audio playback", "Toggle pause on the current recitation.", "  peace-pause"
-		root.Args, root.RunE = noArgs, func(*cobra.Command, []string) error { return runtime.pause() }
-	case "peace-stop":
-		root.Short, root.Long, root.Example = "Stop audio playback", "Stop recitation and pending wallpaper preparation.", "  peace-stop"
-		root.Args, root.RunE = noArgs, func(*cobra.Command, []string) error { return runtime.stop() }
-	case "peace-status":
-		root.Short, root.Long, root.Example = "Show playback status", "Show the current ayah and playback state.", "  peace-status"
-		root.Args, root.RunE = noArgs, func(*cobra.Command, []string) error { return runtime.status() }
-	default:
-		root.RunE = func(*cobra.Command, []string) error { return fmt.Errorf("peace: unknown command name %q", name) }
-	}
 }
 
 func newListenCommand(runtime Runtime) *cobra.Command {
@@ -237,7 +203,7 @@ func addWallpaperFlag(cmd *cobra.Command) {
 	cmd.Flags().Bool("random", false, "Choose a random current background")
 }
 
-func loadConfig(argv0 string) (Config, error) {
+func loadConfig() (Config, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return Config{}, fmt.Errorf("peace: locate home directory: %w", err)
@@ -261,24 +227,6 @@ func loadConfig(argv0 string) (Config, error) {
 	}
 	return Config{Home: home, PluginDir: pluginDir, StateDir: state, CacheDir: cache, Socket: socket}, nil
 }
-
-func runCommand(path string, args ...string) error {
-	cmd := exec.Command(path, args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return &commandExit{code: exitErr.ExitCode()}
-		}
-		return err
-	}
-	return nil
-}
-
-type commandExit struct{ code int }
-
-func (e *commandExit) Error() string { return fmt.Sprintf("command exited with status %d", e.code) }
-func (e *commandExit) ExitCode() int { return e.code }
 
 func safeID(s string) bool {
 	if s == "" {
