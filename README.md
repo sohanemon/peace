@@ -1,6 +1,6 @@
 # Omapeace
 
-An Omarchy plugin for Quran recitation and ayah wallpaper follow. The plugin owns the peace listening commands and top-bar controls. The Peace theme remains responsible for rendering wallpapers.
+An Omarchy plugin for Quran recitation and ayah wallpaper follow. The plugin owns the listening commands and follow renderer. Follow can use the current background and colors from any active Omarchy theme.
 
 ## Develop locally
 
@@ -20,7 +20,7 @@ For changes during development, run the checks against the source folder:
 
 The Go command links the packaged Omapeace executable into ~/.local/bin. It does not install or replace the Peace theme.
 
-The repository ships a statically linked Linux x86_64 Go command at `bin/peace`; users do not need Go, `curl`, `jq`, or `socat`. To rebuild it from source on Linux x86_64, run `CGO_ENABLED=0 go build -o bin/peace ./cmd/peace`. Audio playback uses `mpv`. Wallpaper follow also uses the Peace theme renderer and Omarchy's wallpaper command.
+The repository ships a statically linked Linux x86_64 Go command at `bin/peace`; users do not need Go, `curl`, `jq`, or `socat`. To rebuild it from source on Linux x86_64, run `CGO_ENABLED=0 go build -o bin/peace ./cmd/peace`. Audio playback uses `mpv`; wallpaper rendering uses Pango-enabled ImageMagick and Omarchy's wallpaper command. `peace install` adds the bundled Amiri font for Arabic text rendering.
 
 ## Commands
 
@@ -31,7 +31,7 @@ The repository ships a statically linked Linux x86_64 Go command at `bin/peace`;
     peace status
     peace wallpaper next
 
-The follow option requires the Peace theme to be active and installed at ~/.config/omarchy/themes/peace, or set PEACE_THEME_DIR. Audio and wallpaper preparation use AlQuran Cloud. Listening requires mpv.
+Follow works with any active Omarchy theme. It starts audio immediately, then caches upcoming audio and renders upcoming ayah wallpapers in parallel within the configured buffer. If an audio cache is late, playback streams that ayah while caching continues. Wallpapers use the current background and active theme colors, with bundled artwork in `assets/backgrounds` as fallback. Audio text and recitation URLs come from AlQuran Cloud. Listening requires mpv.
 
 ## Remove
 

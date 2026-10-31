@@ -141,6 +141,8 @@ func (r Runtime) prepare(args []string) error {
 	if renderErr != nil {
 		_ = os.WriteFile(filepath.Join(cache, fmt.Sprintf("%d-%d.skip", surah, ayah)), nil, 0o600)
 		r.logEvent(fmt.Sprintf("wallpaper render skipped %s: %v", ref, renderErr))
+	} else {
+		r.logEvent(fmt.Sprintf("wallpaper cached %s", ref))
 	}
 	return nil
 }
@@ -266,17 +268,20 @@ func (r Runtime) follow() error {
 				}
 			}
 		}
-		base, window := state.Start+appendIndex, max(state.Buffer, state.Lead)
-		if current > 0 {
-			base = current + 1
+		window := max(state.Buffer, state.Lead)
+		audioBase := current + 1
+		if audioBase < state.Start {
+			audioBase = state.Start
 		}
 		if pausedValue, ok := paused.(bool); ok && pausedValue && current == state.Start {
 			window = max(0, max(state.Buffer, state.Lead)-appendIndex)
 		}
-		end := min(state.End, base+window-1)
+		audioEnd := min(state.End, audioBase+window-1)
+		imageBase := max(state.Start, current)
+		imageEnd := min(state.End, imageBase+window-1)
 		active := 0
 		for ayah, pid := range prep {
-			if syscall.Kill(pid, 0) == nil {
+			if processAlive(pid) {
 				active++
 			} else {
 				delete(prep, ayah)
@@ -285,7 +290,7 @@ func (r Runtime) follow() error {
 		}
 		limit := state.Jobs
 		activeAudio := len(audioJobs)
-		for ayah := base; ayah <= end && activeAudio < state.Jobs; ayah++ {
+		for ayah := audioBase; ayah <= audioEnd && activeAudio < state.Jobs; ayah++ {
 			if fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.mp3", state.Surah, ayah))) || fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.audio-fail", state.Surah, ayah))) || audioJobs[ayah] {
 				continue
 			}
@@ -296,7 +301,7 @@ func (r Runtime) follow() error {
 			activeAudio++
 			go r.prefetchAudio(state.Surah, ayah, state.AudioURLs[ayah-state.Start], audioDone)
 		}
-		for ayah := base; ayah <= end && active < limit; ayah++ {
+		for ayah := imageBase; ayah <= imageEnd && active < limit; ayah++ {
 			if _, exists := prep[ayah]; exists {
 				continue
 			}

@@ -211,7 +211,19 @@ func (r Runtime) mpvAlive() bool {
 
 func (r Runtime) pidAlive(path string) bool {
 	pid, err := readPID(path)
-	return err == nil && syscall.Kill(pid, 0) == nil
+	return err == nil && processAlive(pid)
+}
+
+func processAlive(pid int) bool {
+	if syscall.Kill(pid, 0) != nil {
+		return false
+	}
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return true
+	}
+	fields := strings.Fields(string(data[strings.LastIndexByte(string(data), ')')+1:]))
+	return len(fields) == 0 || fields[0] != "Z" && fields[0] != "X"
 }
 
 func readPID(path string) (int, error) {
