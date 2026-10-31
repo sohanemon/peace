@@ -14,6 +14,7 @@ Panel {
   property var hostWidget: null
   property var anchorItem: null
   readonly property var barIdentity: hostWidget || root
+  readonly property string peaceExecutable: Qt.resolvedUrl("bin/peace").toLocalFile()
   property string statusText: "Checking playback…"
   property string requestError: ""
 
@@ -38,7 +39,7 @@ Panel {
   function runPeace(args) {
     if (!root.bar) return
     var quoted = args.map(function(value) { return Util.shellQuote(String(value)) })
-    root.bar.run("peace " + quoted.join(" "))
+    root.bar.run(Util.shellQuote(root.peaceExecutable) + " " + quoted.join(" "))
   }
 
   function refreshStatus() {
@@ -215,8 +216,22 @@ Panel {
   }
 
   Process {
+    id: installProcess
+    command: [root.peaceExecutable, "install"]
+    stderr: StdioCollector {
+      onStreamFinished: {
+        var message = String(text).trim()
+        if (message !== "") root.requestError = message
+      }
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0 && root.requestError === "") root.requestError = "Could not register the peace command"
+    }
+  }
+
+  Process {
     id: statusProcess
-    command: ["peace", "status"]
+    command: [root.peaceExecutable, "status"]
     stdout: StdioCollector {
       onStreamFinished: {
         var value = String(text).trim()
@@ -236,5 +251,8 @@ Panel {
     onTriggered: root.refreshStatus()
   }
 
-  Component.onCompleted: root.refreshStatus()
+  Component.onCompleted: {
+    installProcess.running = true
+    root.refreshStatus()
+  }
 }

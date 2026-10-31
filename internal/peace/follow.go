@@ -52,7 +52,9 @@ func (r Runtime) snapshotBackground() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer input.Close()
+	defer func() {
+		_ = input.Close()
+	}()
 	output, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return "", err
@@ -202,7 +204,9 @@ func downloadFile(url, destination string) error {
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() {
+		_ = response.Body.Close()
+	}()
 	file, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
@@ -471,7 +475,9 @@ func (r Runtime) logEvent(message string) {
 	if err != nil {
 		return
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 	_, _ = fmt.Fprintf(file, "[%s] %s\n", time.Now().Format(time.RFC3339), message)
 }
 

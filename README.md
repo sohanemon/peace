@@ -4,13 +4,12 @@ An Omarchy plugin for Quran recitation and ayah wallpaper follow. The plugin own
 
 ## Develop locally
 
-Copy the plugin into Omarchy's plugin directory, validate it, and install the peace commands:
+Copy the plugin into Omarchy's plugin directory, validate it, and enable it:
 
     mkdir -p ~/.config/omarchy/plugins/io.github.sohanemon.omapeace
     cp -a "$HOME/Code/omapeace/." ~/.config/omarchy/plugins/io.github.sohanemon.omapeace/
     omarchy plugin validate ~/.config/omarchy/plugins/io.github.sohanemon.omapeace
     qmllint -I "$OMARCHY_PATH/shell" ~/.config/omarchy/plugins/io.github.sohanemon.omapeace/BarWidget.qml ~/.config/omarchy/plugins/io.github.sohanemon.omapeace/Panel.qml
-    ~/.config/omarchy/plugins/io.github.sohanemon.omapeace/bin/peace install
     omarchy plugin enable io.github.sohanemon.omapeace
 
 For changes during development, run the checks against the source folder:
@@ -18,7 +17,7 @@ For changes during development, run the checks against the source folder:
     omarchy plugin validate "$HOME/Code/omapeace"
     qmllint -I "$OMARCHY_PATH/shell" "$HOME/Code/omapeace/BarWidget.qml" "$HOME/Code/omapeace/Panel.qml"
 
-The Go command links the packaged Omapeace executable into ~/.local/bin. It does not install or replace the Peace theme.
+When the plugin panel loads, it registers the bundled `peace` command and its aliases in `~/.local/bin`. The panel invokes the bundled binary directly, so it works even before that directory is on the shell's `PATH`. This does not install or replace the Peace theme. Omarchy does not run plugin install hooks, so registration happens when the plugin is enabled and its panel loads.
 
 The repository ships a statically linked Linux x86_64 Go command at `bin/peace`; users do not need Go, `curl`, `jq`, `socat`, ImageMagick, Pango, or system fonts. To rebuild it from source on Linux x86_64, run `CGO_ENABLED=0 go build -o bin/peace ./cmd/peace`. Audio playback uses `mpv`, and wallpaper changes use Omarchy's wallpaper command. Text shaping, font data, image decoding, and wallpaper composition are built into the command.
 

@@ -31,12 +31,16 @@ func (r Runtime) startMPV(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer logFile.Close()
+	defer func() {
+		_ = logFile.Close()
+	}()
 	devnull, err := os.OpenFile(os.DevNull, os.O_RDONLY, 0)
 	if err != nil {
 		return err
 	}
-	defer devnull.Close()
+	defer func() {
+		_ = devnull.Close()
+	}()
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = devnull, logFile, logFile
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("peace listen: start mpv: %w", err)
@@ -111,14 +115,18 @@ func (r Runtime) startWorker(action string) error {
 	if err != nil {
 		return err
 	}
-	defer logFile.Close()
+	defer func() {
+		_ = logFile.Close()
+	}()
 	cmd := exec.Command(executable, action)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	devnull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if err != nil {
 		return err
 	}
-	defer devnull.Close()
+	defer func() {
+		_ = devnull.Close()
+	}()
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = devnull, logFile, logFile
 	if err := cmd.Start(); err != nil {
 		return err
@@ -249,7 +257,9 @@ func (r Runtime) sendIPC(command map[string]any) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer connection.Close()
+	defer func() {
+		_ = connection.Close()
+	}()
 	request := make(map[string]any, len(command)+1)
 	for key, value := range command {
 		request[key] = value
@@ -280,7 +290,9 @@ func (r Runtime) properties(names ...string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer connection.Close()
+	defer func() {
+		_ = connection.Close()
+	}()
 	encoder := json.NewEncoder(connection)
 	requests := make(map[uint64]string, len(names))
 	for _, name := range names {
@@ -327,7 +339,7 @@ func (r Runtime) openIPC() (net.Conn, error) {
 		return nil, err
 	}
 	if err := connection.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		connection.Close()
+		_ = connection.Close()
 		return nil, err
 	}
 	return connection, nil

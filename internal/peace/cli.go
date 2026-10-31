@@ -1,3 +1,4 @@
+// Package peace implements the command-line interface for the peace application.
 // NOTE: Keep command routing here and place playback, rendering, and API work in focused modules.
 package peace
 
@@ -11,6 +12,7 @@ import (
 	"strings"
 )
 
+// Run parses argv and dispatches to the appropriate command handler.
 func Run(argv0 string, args []string) error {
 	cfg, err := loadConfig(argv0)
 	if err != nil {
@@ -121,11 +123,18 @@ func (r Runtime) installCommands() error {
 	}
 	for _, name := range []string{"peace", "peace-listen", "peace-pause", "peace-stop", "peace-status"} {
 		link := filepath.Join(userBin, name)
-		if existing, readErr := os.Readlink(link); readErr == nil && existing == executable {
-			continue
+		if existing, readErr := os.Readlink(link); readErr == nil {
+			if existing == executable {
+				continue
+			}
+			return fmt.Errorf("peace install: refusing to replace existing command %s", link)
+		} else if !errors.Is(readErr, os.ErrNotExist) {
+			return readErr
 		}
-		if err := os.Remove(link); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
+		if _, statErr := os.Lstat(link); statErr == nil {
+			return fmt.Errorf("peace install: refusing to replace existing command %s", link)
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
 		}
 		if err := os.Symlink(executable, link); err != nil {
 			return err
@@ -240,7 +249,7 @@ func safeID(s string) bool {
 		return false
 	}
 	for _, c := range s {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("._-", c)) {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && !strings.ContainsRune("._-", c) {
 			return false
 		}
 	}

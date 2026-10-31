@@ -146,7 +146,7 @@ func parseReference(ref string) (int, int, int, error) {
 func (r Runtime) surahCounts(ctx context.Context) (map[int]int, error) {
 	path := filepath.Join(r.Config.CacheDir, "surahs.json")
 	var cached []Surah
-	if info, err := os.Stat(path); err == nil && time.Now().Sub(info.ModTime()) < 30*24*time.Hour {
+	if info, err := os.Stat(path); err == nil && time.Since(info.ModTime()) < 30*24*time.Hour {
 		if data, readErr := os.ReadFile(path); readErr == nil && json.Unmarshal(data, &cached) == nil {
 			return countMap(cached), nil
 		}
@@ -214,7 +214,7 @@ func openURL(ctx context.Context, url string) (*http.Response, error) {
 		return nil, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		response.Body.Close()
+		_ = response.Body.Close()
 		return nil, fmt.Errorf("HTTP %s", response.Status)
 	}
 	return response, nil
@@ -225,7 +225,9 @@ func getJSON(ctx context.Context, url string, target any) error {
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() {
+		_ = response.Body.Close()
+	}()
 	return json.NewDecoder(io.LimitReader(response.Body, 16<<20)).Decode(target)
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 )
 
+// Config holds the runtime configuration for the peace application.
 type Config struct {
 	Home      string
 	PluginDir string
@@ -12,6 +13,7 @@ type Config struct {
 	Socket    string
 }
 
+// Options holds the configurable options for the listen command.
 type Options struct {
 	Reference string
 	Reciter   string
@@ -21,6 +23,7 @@ type Options struct {
 	Jobs      int
 }
 
+// PlayState represents the current playback state of a recitation session.
 type PlayState struct {
 	Surah     int      `json:"surah"`
 	Start     int      `json:"start"`
@@ -37,15 +40,18 @@ type PlayState struct {
 	Appended  int      `json:"appended"`
 }
 
+// APIResponse is the envelope returned by the Quran API.
 type APIResponse struct {
 	Data json.RawMessage `json:"data"`
 }
 
+// Surah describes a single surah from the Quran API.
 type Surah struct {
 	Number        int `json:"number"`
 	NumberOfAyahs int `json:"numberOfAyahs"`
 }
 
+// SurahAudio groups the audio URLs for the ayahs of a surah.
 type SurahAudio struct {
 	Ayahs []struct {
 		NumberInSurah int    `json:"numberInSurah"`
@@ -53,6 +59,7 @@ type SurahAudio struct {
 	} `json:"ayahs"`
 }
 
+// Runtime ties configuration to the running peace instance.
 type Runtime struct {
 	Config Config
 }

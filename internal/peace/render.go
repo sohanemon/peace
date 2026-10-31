@@ -8,7 +8,9 @@ import (
 	"image"
 	"image/color"
 	"image/draw"
+	// image/gif registers the GIF image format with image.Decode.
 	_ "image/gif"
+	// image/jpeg registers the JPEG image format with image.Decode.
 	_ "image/jpeg"
 	"image/png"
 	"math"
@@ -25,9 +27,11 @@ import (
 	"github.com/go-text/typesetting/font/opentype"
 	"github.com/go-text/typesetting/language"
 	"github.com/go-text/typesetting/shaping"
+	// golang.org/x/image/bmp registers the BMP image format with image.Decode.
 	_ "golang.org/x/image/bmp"
 	xdraw "golang.org/x/image/draw"
 	"golang.org/x/image/math/fixed"
+	// golang.org/x/image/tiff registers the TIFF image format with image.Decode.
 	_ "golang.org/x/image/tiff"
 	"golang.org/x/image/vector"
 	"golang.org/x/image/webp"
@@ -148,7 +152,7 @@ func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, outpu
 		return err
 	}
 	if err := png.Encode(file, backdrop); err != nil {
-		file.Close()
+		_ = file.Close()
 		return err
 	}
 	return file.Close()
@@ -306,7 +310,9 @@ func loadBackdrop(path string, width, height int, fallback string) (*image.RGBA,
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() {
+		_ = file.Close()
+	}()
 	source, _, err := image.Decode(file)
 	if err != nil {
 		return nil, err
