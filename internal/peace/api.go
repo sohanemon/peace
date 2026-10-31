@@ -65,6 +65,25 @@ func (r Runtime) listen(args []string) error {
 	state := PlayState{Surah: surah, Start: start, End: end, Reciter: o.Reciter, Follow: o.Follow, BaseImage: baseImage, Preparing: o.Follow}
 	if o.Follow {
 		state.AudioURLs, state.Buffer, state.Lead, state.Jobs = urls, o.Buffer, o.Lead, o.Jobs
+		if err := os.MkdirAll(r.Config.StateDir, 0o700); err != nil {
+			return err
+		}
+		fmt.Println("Preparing first wallpapers…")
+		leadEnd := min(end, start+o.Lead-1)
+		for ayah := start; ayah <= leadEnd; ayah++ {
+			if err := r.prepareInitialWallpaper(surah, ayah, baseImage); err != nil {
+				if ayah == start {
+					return fmt.Errorf("peace listen: prepare first ayah wallpaper: %w", err)
+				}
+				cache := filepath.Join(r.Config.CacheDir, "follow")
+				_ = os.WriteFile(filepath.Join(cache, fmt.Sprintf("%d-%d.skip", surah, ayah)), nil, 0o600)
+				r.logEvent(fmt.Sprintf("startup wallpaper skipped %d:%d: %v", surah, ayah, err))
+			}
+		}
+		if !fileExists(filepath.Join(r.Config.CacheDir, "follow", fmt.Sprintf("%d-%d.png", surah, start))) {
+			return errors.New("peace listen: first ayah wallpaper could not be prepared")
+		}
+		r.displayWallpaper(filepath.Join(r.Config.CacheDir, "follow"), surah, start)
 	}
 	if err := r.writeState(state); err != nil {
 		return err

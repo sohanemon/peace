@@ -147,6 +147,24 @@ func (r Runtime) prepare(args []string) error {
 	return nil
 }
 
+func (r Runtime) prepareInitialWallpaper(surah, ayah int, baseImage string) error {
+	cache := filepath.Join(r.Config.CacheDir, "follow")
+	if err := os.MkdirAll(cache, 0o700); err != nil {
+		return err
+	}
+	image := filepath.Join(cache, fmt.Sprintf("%d-%d.png", surah, ayah))
+	temp := image + ".tmp.png"
+	if err := r.renderAyah(surah, ayah, baseImage, temp); err != nil {
+		_ = os.Remove(temp)
+		return err
+	}
+	if err := os.Rename(temp, image); err != nil {
+		_ = os.Remove(temp)
+		return err
+	}
+	return nil
+}
+
 func downloadFile(url, destination string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -199,6 +217,7 @@ func (r Runtime) follow() error {
 	appendIndex, current := state.Appended, state.Start
 	lastTitle, waitRef := "", ""
 	waitStarted := time.Time{}
+	preloadedWallpaper := 0
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 	for r.mpvAlive() {
@@ -218,6 +237,8 @@ func (r Runtime) follow() error {
 		count, _ := r.property("playlist-count")
 		title, _ := r.property("media-title")
 		paused, _ := r.property("pause")
+		playbackTime, _ := r.property("playback-time")
+		duration, _ := r.property("duration")
 		idleActive, _ := idle.(bool)
 		positionValue, hasPosition := position.(float64)
 		playlistCount, hasCount := count.(float64)
@@ -235,7 +256,21 @@ func (r Runtime) follow() error {
 					r.logEvent("audio started " + mediaTitle)
 					lastTitle = mediaTitle
 				}
-				r.displayWallpaper(cache, state.Surah, current)
+				if current == preloadedWallpaper {
+					preloadedWallpaper = 0
+				} else if preloadedWallpaper != current+1 {
+					r.displayWallpaper(cache, state.Surah, current)
+				}
+			}
+		}
+		if elapsed, elapsedOK := playbackTime.(float64); elapsedOK {
+			if length, lengthOK := duration.(float64); lengthOK && current < state.End && length-elapsed <= 0.45 {
+				next := current + 1
+				if next-state.Start < appendIndex && fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.png", state.Surah, next))) {
+					if r.displayWallpaper(cache, state.Surah, next) {
+						preloadedWallpaper = next
+					}
+				}
 			}
 		}
 		appendLimit := max(0, current-state.Start+1) + state.Buffer
@@ -245,8 +280,14 @@ func (r Runtime) follow() error {
 		if appendIndex < appendLimit {
 			ayah := state.Start + appendIndex
 			mp3 := filepath.Join(cache, fmt.Sprintf("%d-%d.mp3", state.Surah, ayah))
+			imageResolved := fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.png", state.Surah, ayah))) || fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.skip", state.Surah, ayah)))
 			audioResolved := fileExists(mp3) || fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.audio-fail", state.Surah, ayah)))
-			if audioResolved || (!waitStarted.IsZero() && now.Sub(waitStarted) >= 2*time.Second) {
+			key := state.Surah*1000 + ayah
+			if waitRef != fmt.Sprint(key) {
+				waitRef = fmt.Sprint(key)
+				waitStarted = now
+			}
+			if imageResolved && (audioResolved || now.Sub(waitStarted) >= 2*time.Second) {
 				audioSource := mp3
 				if !fileExists(mp3) && appendIndex < len(state.AudioURLs) {
 					audioSource = state.AudioURLs[appendIndex]
@@ -259,12 +300,6 @@ func (r Runtime) follow() error {
 					r.logEvent(fmt.Sprintf("audio appended %d:%d (%s)", state.Surah, ayah, audioSource))
 				} else {
 					r.logEvent(fmt.Sprintf("audio append failed %d:%d: %v", state.Surah, ayah, err))
-				}
-			} else {
-				key := state.Surah*1000 + ayah
-				if waitRef != fmt.Sprint(key) {
-					waitRef = fmt.Sprint(key)
-					waitStarted = now
 				}
 			}
 		}
@@ -366,27 +401,27 @@ func (r Runtime) startPrepare(surah, ayah int) (int, error) {
 	return pid, cmd.Process.Release()
 }
 
-func (r Runtime) displayWallpaper(cache string, surah, ayah int) {
+func (r Runtime) displayWallpaper(cache string, surah, ayah int) bool {
 	ref := fmt.Sprintf("%d:%d", surah, ayah)
 	shown, _ := os.ReadFile(filepath.Join(r.Config.StateDir, "displayed-ayah"))
 	if strings.TrimSpace(string(shown)) == fmt.Sprintf("%d-%d", surah, ayah) {
-		return
+		return true
 	}
 	image := filepath.Join(cache, fmt.Sprintf("%d-%d.png", surah, ayah))
 	if !fileExists(image) {
-		return
+		return false
 	}
 	backgroundDir := filepath.Join(r.Config.Home, ".local", "share", "omapeace", "backgrounds")
 	if os.MkdirAll(backgroundDir, 0o700) != nil {
-		return
+		return false
 	}
 	background := filepath.Join(backgroundDir, fmt.Sprintf("follow-%d.png", r.Now().UnixNano()))
 	data, err := os.ReadFile(image)
 	if err != nil {
-		return
+		return false
 	}
 	if os.WriteFile(background, data, 0o600) != nil {
-		return
+		return false
 	}
 	if baseSource, readErr := os.ReadFile(filepath.Join(cache, "base-source")); readErr == nil {
 		_ = os.WriteFile(background+".base", baseSource, 0o600)
@@ -395,7 +430,7 @@ func (r Runtime) displayWallpaper(cache string, surah, ayah int) {
 	if cmd.Run() != nil {
 		_ = os.Remove(background)
 		r.logEvent("wallpaper switch failed " + ref)
-		return
+		return false
 	}
 	_ = os.WriteFile(filepath.Join(r.Config.StateDir, "displayed-ayah"), []byte(fmt.Sprintf("%d-%d", surah, ayah)), 0o600)
 	r.logEvent("wallpaper switched " + ref)
@@ -406,6 +441,7 @@ func (r Runtime) displayWallpaper(cache string, surah, ayah int) {
 			_ = os.Remove(path + ".base")
 		}
 	}
+	return true
 }
 
 func (r Runtime) finishFollow() {
