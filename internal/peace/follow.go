@@ -91,6 +91,37 @@ func (r Runtime) backgroundDirectories() []string {
 	}
 }
 
+func followArtifact(cache string, surah, ayah int, extension string) string {
+	return filepath.Join(cache, fmt.Sprintf("%d-%d%s", surah, ayah, extension))
+}
+
+type followWindow struct {
+	appendLimit int
+	audioStart  int
+	audioEnd    int
+	imageStart  int
+	imageEnd    int
+}
+
+func planFollowWindow(state PlayState, current, appended int, paused bool) followWindow {
+	total := state.End - state.Start + 1
+	appendLimit := max(0, current-state.Start+1) + state.Buffer
+	appendLimit = min(total, appendLimit)
+	window := max(state.Buffer, state.Lead)
+	if paused && current == state.Start {
+		window = max(0, window-appended)
+	}
+	audioStart := max(state.Start, current+1)
+	imageStart := max(state.Start, current)
+	return followWindow{
+		appendLimit: appendLimit,
+		audioStart:  audioStart,
+		audioEnd:    min(state.End, audioStart+window-1),
+		imageStart:  imageStart,
+		imageEnd:    min(state.End, imageStart+window-1),
+	}
+}
+
 func supportedBackground(path string) bool {
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp":
@@ -121,9 +152,9 @@ func (r Runtime) prepare(args []string) error {
 	if err := os.MkdirAll(cache, 0o700); err != nil {
 		return err
 	}
-	image := filepath.Join(cache, fmt.Sprintf("%d-%d.png", surah, ayah))
+	image := followArtifact(cache, surah, ayah, ".png")
 	var renderErr error
-	if fileExists(image) || fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.skip", surah, ayah))) {
+	if fileExists(image) || fileExists(followArtifact(cache, surah, ayah, ".skip")) {
 		renderErr = nil
 	} else {
 		for attempt := 1; attempt <= 2; attempt++ {
@@ -138,7 +169,7 @@ func (r Runtime) prepare(args []string) error {
 		}
 	}
 	if renderErr != nil {
-		_ = os.WriteFile(filepath.Join(cache, fmt.Sprintf("%d-%d.skip", surah, ayah)), nil, 0o600)
+		_ = os.WriteFile(followArtifact(cache, surah, ayah, ".skip"), nil, 0o600)
 		r.logEvent(fmt.Sprintf("wallpaper render skipped %s: %v", ref, renderErr))
 	} else {
 		r.logEvent(fmt.Sprintf("wallpaper cached %s", ref))
@@ -151,7 +182,7 @@ func (r Runtime) prepareInitialWallpaper(surah, ayah int, baseImage string) erro
 	if err := os.MkdirAll(cache, 0o700); err != nil {
 		return err
 	}
-	image := filepath.Join(cache, fmt.Sprintf("%d-%d.png", surah, ayah))
+	image := followArtifact(cache, surah, ayah, ".png")
 	temp := image + ".tmp.png"
 	if err := r.renderAyah(surah, ayah, baseImage, temp); err != nil {
 		_ = os.Remove(temp)
@@ -207,7 +238,8 @@ func (r Runtime) follow() error {
 	audioJobs := map[int]bool{}
 	audioDone := make(chan int, 32)
 	appendIndex, current := state.Appended, state.Start
-	lastTitle, waitRef := "", ""
+	lastTitle := ""
+	waitAyah := 0
 	waitStarted := time.Time{}
 	preloadedWallpaper := 0
 	ticker := time.NewTicker(200 * time.Millisecond)
@@ -224,13 +256,14 @@ func (r Runtime) follow() error {
 		}
 	audioPrefetchComplete:
 		now := time.Now()
-		idle, _ := r.property("idle-active")
-		position, _ := r.property("playlist-pos")
-		count, _ := r.property("playlist-count")
-		title, _ := r.property("media-title")
-		paused, _ := r.property("pause")
-		playbackTime, _ := r.property("playback-time")
-		duration, _ := r.property("duration")
+		properties, _ := r.properties("idle-active", "playlist-pos", "playlist-count", "media-title", "pause", "playback-time", "duration")
+		idle := properties["idle-active"]
+		position := properties["playlist-pos"]
+		count := properties["playlist-count"]
+		title := properties["media-title"]
+		paused := properties["pause"]
+		playbackTime := properties["playback-time"]
+		duration := properties["duration"]
 		idleActive, _ := idle.(bool)
 		positionValue, hasPosition := position.(float64)
 		playlistCount, hasCount := count.(float64)
@@ -258,25 +291,22 @@ func (r Runtime) follow() error {
 		if elapsed, elapsedOK := playbackTime.(float64); elapsedOK {
 			if length, lengthOK := duration.(float64); lengthOK && current < state.End && length-elapsed <= 0.45 {
 				next := current + 1
-				if next-state.Start < appendIndex && fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.png", state.Surah, next))) {
+				if next-state.Start < appendIndex && fileExists(followArtifact(cache, state.Surah, next, ".png")) {
 					if r.displayWallpaper(cache, state.Surah, next) {
 						preloadedWallpaper = next
 					}
 				}
 			}
 		}
-		appendLimit := max(0, current-state.Start+1) + state.Buffer
-		if appendLimit > total {
-			appendLimit = total
-		}
-		if appendIndex < appendLimit {
+		pausedValue, _ := paused.(bool)
+		window := planFollowWindow(state, current, appendIndex, pausedValue)
+		if appendIndex < window.appendLimit {
 			ayah := state.Start + appendIndex
-			mp3 := filepath.Join(cache, fmt.Sprintf("%d-%d.mp3", state.Surah, ayah))
-			imageResolved := fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.png", state.Surah, ayah))) || fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.skip", state.Surah, ayah)))
-			audioResolved := fileExists(mp3) || fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.audio-fail", state.Surah, ayah)))
-			key := state.Surah*1000 + ayah
-			if waitRef != fmt.Sprint(key) {
-				waitRef = fmt.Sprint(key)
+			mp3 := followArtifact(cache, state.Surah, ayah, ".mp3")
+			imageResolved := fileExists(followArtifact(cache, state.Surah, ayah, ".png")) || fileExists(followArtifact(cache, state.Surah, ayah, ".skip"))
+			audioResolved := fileExists(mp3) || fileExists(followArtifact(cache, state.Surah, ayah, ".audio-fail"))
+			if waitAyah != ayah {
+				waitAyah = ayah
 				waitStarted = now
 			}
 			if imageResolved && (audioResolved || now.Sub(waitStarted) >= 2*time.Second) {
@@ -287,25 +317,16 @@ func (r Runtime) follow() error {
 				if err := r.appendAudio(audioSource, fmt.Sprintf("%d:%d", state.Surah, ayah)); err == nil {
 					appendIndex++
 					state.Appended = appendIndex
-					_ = r.writeState(state)
-					waitRef = ""
+					if err := r.writeState(state); err != nil {
+						r.logEvent(fmt.Sprintf("state update failed after append: %v", err))
+					}
+					waitAyah = 0
 					r.logEvent(fmt.Sprintf("audio appended %d:%d (%s)", state.Surah, ayah, audioSource))
 				} else {
 					r.logEvent(fmt.Sprintf("audio append failed %d:%d: %v", state.Surah, ayah, err))
 				}
 			}
 		}
-		window := max(state.Buffer, state.Lead)
-		audioBase := current + 1
-		if audioBase < state.Start {
-			audioBase = state.Start
-		}
-		if pausedValue, ok := paused.(bool); ok && pausedValue && current == state.Start {
-			window = max(0, max(state.Buffer, state.Lead)-appendIndex)
-		}
-		audioEnd := min(state.End, audioBase+window-1)
-		imageBase := max(state.Start, current)
-		imageEnd := min(state.End, imageBase+window-1)
 		active := 0
 		for ayah, pid := range prep {
 			if processAlive(pid) {
@@ -317,8 +338,8 @@ func (r Runtime) follow() error {
 		}
 		limit := state.Jobs
 		activeAudio := len(audioJobs)
-		for ayah := audioBase; ayah <= audioEnd && activeAudio < state.Jobs; ayah++ {
-			if fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.mp3", state.Surah, ayah))) || fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.audio-fail", state.Surah, ayah))) || audioJobs[ayah] {
+		for ayah := window.audioStart; ayah <= window.audioEnd && activeAudio < state.Jobs; ayah++ {
+			if fileExists(followArtifact(cache, state.Surah, ayah, ".mp3")) || fileExists(followArtifact(cache, state.Surah, ayah, ".audio-fail")) || audioJobs[ayah] {
 				continue
 			}
 			if ayah-state.Start >= len(state.AudioURLs) {
@@ -328,11 +349,11 @@ func (r Runtime) follow() error {
 			activeAudio++
 			go r.prefetchAudio(state.Surah, ayah, state.AudioURLs[ayah-state.Start], audioDone)
 		}
-		for ayah := imageBase; ayah <= imageEnd && active < limit; ayah++ {
+		for ayah := window.imageStart; ayah <= window.imageEnd && active < limit; ayah++ {
 			if _, exists := prep[ayah]; exists {
 				continue
 			}
-			imageDone := fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.png", state.Surah, ayah))) || fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.skip", state.Surah, ayah)))
+			imageDone := fileExists(followArtifact(cache, state.Surah, ayah, ".png")) || fileExists(followArtifact(cache, state.Surah, ayah, ".skip"))
 			if imageDone {
 				continue
 			}
@@ -353,8 +374,8 @@ func (r Runtime) follow() error {
 func (r Runtime) prefetchAudio(surah, ayah int, url string, done chan<- int) {
 	defer func() { done <- ayah }()
 	cache := filepath.Join(r.Config.CacheDir, "follow")
-	audio := filepath.Join(cache, fmt.Sprintf("%d-%d.mp3", surah, ayah))
-	marker := filepath.Join(cache, fmt.Sprintf("%d-%d.audio-fail", surah, ayah))
+	audio := followArtifact(cache, surah, ayah, ".mp3")
+	marker := followArtifact(cache, surah, ayah, ".audio-fail")
 	var err error
 	for attempt := 0; attempt < 2; attempt++ {
 		err = downloadFile(url, audio+".tmp")
@@ -399,7 +420,7 @@ func (r Runtime) displayWallpaper(cache string, surah, ayah int) bool {
 	if strings.TrimSpace(string(shown)) == fmt.Sprintf("%d-%d", surah, ayah) {
 		return true
 	}
-	image := filepath.Join(cache, fmt.Sprintf("%d-%d.png", surah, ayah))
+	image := followArtifact(cache, surah, ayah, ".png")
 	if !fileExists(image) {
 		return false
 	}

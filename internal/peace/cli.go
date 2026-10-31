@@ -4,7 +4,6 @@ package peace
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -130,34 +129,6 @@ func (r Runtime) installCommands() error {
 		}
 		if err := os.Symlink(executable, link); err != nil {
 			return err
-		}
-	}
-	fontSource := filepath.Join(r.Config.PluginDir, "assets", "fonts", "Amiri-Regular.ttf")
-	if input, openErr := os.Open(fontSource); openErr == nil {
-		fontDir := filepath.Join(userBin, "..", "share", "fonts", "omapeace")
-		if err := os.MkdirAll(fontDir, 0o755); err != nil {
-			_ = input.Close()
-			return err
-		}
-		fontTarget := filepath.Join(fontDir, "Amiri-Regular.ttf")
-		output, createErr := os.OpenFile(fontTarget, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
-		if createErr != nil {
-			_ = input.Close()
-			return createErr
-		}
-		_, copyErr := io.Copy(output, input)
-		closeOutputErr, closeInputErr := output.Close(), input.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		if closeOutputErr != nil {
-			return closeOutputErr
-		}
-		if closeInputErr != nil {
-			return closeInputErr
-		}
-		if fcCache, lookErr := exec.LookPath("fc-cache"); lookErr == nil {
-			_ = exec.Command(fcCache, "-f", fontDir).Run()
 		}
 	}
 	fmt.Printf("Installed peace commands in %s\n", userBin)

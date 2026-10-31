@@ -20,7 +20,7 @@ For changes during development, run the checks against the source folder:
 
 The Go command links the packaged Omapeace executable into ~/.local/bin. It does not install or replace the Peace theme.
 
-The repository ships a statically linked Linux x86_64 Go command at `bin/peace`; users do not need Go, `curl`, `jq`, or `socat`. To rebuild it from source on Linux x86_64, run `CGO_ENABLED=0 go build -o bin/peace ./cmd/peace`. Audio playback uses `mpv`; wallpaper rendering uses Pango-enabled ImageMagick and Omarchy's wallpaper command. `peace install` adds the bundled Amiri font for Arabic text rendering.
+The repository ships a statically linked Linux x86_64 Go command at `bin/peace`; users do not need Go, `curl`, `jq`, `socat`, ImageMagick, Pango, or system fonts. To rebuild it from source on Linux x86_64, run `CGO_ENABLED=0 go build -o bin/peace ./cmd/peace`. Audio playback uses `mpv`, and wallpaper changes use Omarchy's wallpaper command. Text shaping, font data, image decoding, and wallpaper composition are built into the command.
 
 ## Commands
 

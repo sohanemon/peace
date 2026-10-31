@@ -244,16 +244,15 @@ func readPID(path string) (int, error) {
 	return pid, nil
 }
 
-func (r Runtime) sendIPC(command any) (map[string]any, error) {
-	connection, err := net.DialTimeout("unix", r.Config.Socket, 500*time.Millisecond)
+func (r Runtime) sendIPC(command map[string]any) (map[string]any, error) {
+	connection, err := r.openIPC()
 	if err != nil {
 		return nil, err
 	}
 	defer connection.Close()
-	_ = connection.SetDeadline(time.Now().Add(2 * time.Second))
-	request, ok := command.(map[string]any)
-	if !ok {
-		return nil, errors.New("invalid mpv IPC command")
+	request := make(map[string]any, len(command)+1)
+	for key, value := range command {
+		request[key] = value
 	}
 	requestID := ipcSequence.Add(1)
 	request["request_id"] = requestID
@@ -276,15 +275,74 @@ func (r Runtime) sendIPC(command any) (map[string]any, error) {
 	}
 }
 
-func (r Runtime) property(name string) (any, error) {
-	response, err := r.sendIPC(map[string]any{"command": []any{"get_property", name}})
+func (r Runtime) properties(names ...string) (map[string]any, error) {
+	connection, err := r.openIPC()
 	if err != nil {
 		return nil, err
 	}
-	if response["error"] != "success" {
+	defer connection.Close()
+	encoder := json.NewEncoder(connection)
+	requests := make(map[uint64]string, len(names))
+	for _, name := range names {
+		requestID := ipcSequence.Add(1)
+		requests[requestID] = name
+		if err := encoder.Encode(map[string]any{
+			"command":    []any{"get_property", name},
+			"request_id": requestID,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	values := make(map[string]any, len(names))
+	reader := bufio.NewReader(connection)
+	for len(requests) > 0 {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			return values, err
+		}
+		var response map[string]any
+		if json.Unmarshal(line, &response) != nil {
+			continue
+		}
+		id, ok := response["request_id"].(float64)
+		if !ok {
+			continue
+		}
+		requestID := uint64(id)
+		name, ok := requests[requestID]
+		if !ok {
+			continue
+		}
+		delete(requests, requestID)
+		if response["error"] == "success" {
+			values[name] = response["data"]
+		}
+	}
+	return values, nil
+}
+
+func (r Runtime) openIPC() (net.Conn, error) {
+	connection, err := net.DialTimeout("unix", r.Config.Socket, 500*time.Millisecond)
+	if err != nil {
+		return nil, err
+	}
+	if err := connection.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		connection.Close()
+		return nil, err
+	}
+	return connection, nil
+}
+
+func (r Runtime) property(name string) (any, error) {
+	values, err := r.properties(name)
+	if err != nil {
+		return nil, err
+	}
+	value, ok := values[name]
+	if !ok {
 		return nil, errors.New("mpv property unavailable")
 	}
-	return response["data"], nil
+	return value, nil
 }
 
 func (r Runtime) readState() (PlayState, error) {

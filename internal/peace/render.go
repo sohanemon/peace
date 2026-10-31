@@ -1,17 +1,38 @@
 package peace
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"html"
+	"image"
+	"image/color"
+	"image/draw"
+	_ "image/gif"
+	_ "image/jpeg"
+	"image/png"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/go-text/typesetting/di"
+	"github.com/go-text/typesetting/font"
+	"github.com/go-text/typesetting/font/opentype"
+	"github.com/go-text/typesetting/language"
+	"github.com/go-text/typesetting/shaping"
+	_ "golang.org/x/image/bmp"
+	xdraw "golang.org/x/image/draw"
+	"golang.org/x/image/math/fixed"
+	_ "golang.org/x/image/tiff"
+	"golang.org/x/image/vector"
+	"golang.org/x/image/webp"
+
+	"io.github.sohanemon/peace/assets"
 )
 
 type ayahEdition struct {
@@ -36,7 +57,28 @@ type themeColors struct {
 	Background string
 }
 
+type textStyle struct {
+	Text      string
+	Size      int
+	Minimum   int
+	Face      *font.Face
+	Color     color.RGBA
+	Direction di.Direction
+	Script    language.Script
+}
+
+type renderedText struct {
+	Image  *image.RGBA
+	Height int
+	Width  int
+}
+
 var colorPattern = regexp.MustCompile(`(?m)^([a-z_]+)\s*=\s*"(#[0-9A-Fa-f]{6})"`)
+var fontFaces struct {
+	sync.Once
+	Arabic, Serif, Sans *font.Face
+	err                 error
+}
 
 func (r Runtime) renderAyah(surah, ayah int, baseImage, output string) error {
 	text, err := fetchAyahText(surah, ayah)
@@ -47,9 +89,8 @@ func (r Runtime) renderAyah(surah, ayah int, baseImage, output string) error {
 }
 
 func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, output string) error {
-	magick, err := exec.LookPath("magick")
-	if err != nil {
-		return fmt.Errorf("wallpaper rendering requires ImageMagick: %w", err)
+	if err := loadRenderFonts(); err != nil {
+		return err
 	}
 	colors := r.currentColors()
 	width, height := r.screenSize()
@@ -57,79 +98,312 @@ func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, outpu
 	maxHeight := height * 76 / 100
 	fontScale := min(width, height*16/9) * 100 / 2560
 	fontScale = min(150, max(60, fontScale))
-	arabicSize := 76 * fontScale / 100
-	englishSize := 38 * fontScale / 100
-	referenceSize := 18 * fontScale / 100
-	if err := os.MkdirAll(filepath.Dir(output), 0o700); err != nil {
-		return err
+	styles := []textStyle{
+		{Text: text.Arabic, Size: 76 * fontScale / 100, Minimum: 24, Face: fontFaces.Arabic, Color: parseColor(colors.Accent), Direction: di.DirectionRTL, Script: language.Arabic},
+		{Text: trimEdgeQuote(text.English), Size: 38 * fontScale / 100, Minimum: 18, Face: fontFaces.Serif, Color: parseColor(colors.Foreground), Direction: di.DirectionLTR, Script: language.Latin},
+		{Text: text.Reference, Size: 18 * fontScale / 100, Minimum: 12, Face: fontFaces.Sans, Color: parseColor(colors.Muted), Direction: di.DirectionLTR, Script: language.Latin},
 	}
-	tempDir, err := os.MkdirTemp(filepath.Dir(output), ".omapeace-render-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tempDir)
-	texts := []string{text.Arabic, trimEdgeQuote(text.English), text.Reference}
-	fonts := []*int{&arabicSize, &englishSize, &referenceSize}
-	minimums := []int{24, 18, 12}
-	files := []string{filepath.Join(tempDir, "arabic.png"), filepath.Join(tempDir, "english.png"), filepath.Join(tempDir, "reference.png")}
-	colorsByText := []string{colors.Accent, colors.Foreground, colors.Muted}
-	families := []string{"Amiri", "DejaVu Serif", "DejaVu Sans"}
-	widths, heights := make([]int, 3), make([]int, 3)
 	gap := max(18, height*5/100)
+	var rendered [3]renderedText
 	for attempt := 0; attempt < 18; attempt++ {
-		for i := range texts {
-			markup := fmt.Sprintf("<span font_desc='%s %d' foreground='%s'>%s</span>", families[i], *fonts[i], colorsByText[i], html.EscapeString(texts[i]))
-			if err := runMagick(magick, "-size", strconv.Itoa(textWidth)+"x", "-define", "pango:align=center", "-background", "none", "pango:"+markup, files[i]); err != nil {
-				return err
-			}
-			widths[i], heights[i], err = imageSize(magick, files[i])
+		stackHeight := gap * 2
+		fits := true
+		for i := range styles {
+			var err error
+			rendered[i], err = renderTextBlock(styles[i], textWidth)
 			if err != nil {
-				return err
+				return fmt.Errorf("render ayah %d:%d text: %w", surah, ayah, err)
 			}
+			stackHeight += rendered[i].Height
+			fits = fits && rendered[i].Width <= textWidth
 		}
-		stackHeight := heights[0] + heights[1] + heights[2] + gap*2
-		if stackHeight <= maxHeight && widths[0] <= textWidth && widths[1] <= textWidth && widths[2] <= textWidth {
+		if fits && stackHeight <= maxHeight {
 			break
 		}
-		for i := range fonts {
-			*fonts[i] = max(minimums[i], *fonts[i]*9/10)
+		for i := range styles {
+			styles[i].Size = max(styles[i].Minimum, styles[i].Size*9/10)
 		}
 		if attempt == 17 {
 			return fmt.Errorf("ayah %d:%d does not fit the display", surah, ayah)
 		}
 	}
-	stackHeight := heights[0] + heights[1] + heights[2] + gap*2
-	stack := filepath.Join(tempDir, "stack.png")
-	stackArgs := []string{"-size", fmt.Sprintf("%dx%d", textWidth, stackHeight), "xc:none"}
+	stackHeight := gap*2 + rendered[0].Height + rendered[1].Height + rendered[2].Height
+	stack := image.NewRGBA(image.Rect(0, 0, textWidth, stackHeight))
 	y := 0
-	for i, path := range files {
-		stackArgs = append(stackArgs, path, "-gravity", "north", "-geometry", fmt.Sprintf("+0+%d", y), "-compose", "over", "-composite")
-		y += heights[i] + gap
+	for i := range rendered {
+		draw.Draw(stack, image.Rect(0, y, textWidth, y+rendered[i].Height), rendered[i].Image, image.Point{}, draw.Over)
+		y += rendered[i].Height + gap
 	}
-	stackArgs = append(stackArgs, stack)
-	if err := runMagick(magick, stackArgs...); err != nil {
+	backdrop, err := loadBackdrop(baseImage, width, height, colors.Background)
+	if err != nil {
+		return fmt.Errorf("load wallpaper background: %w", err)
+	}
+	shadowText(backdrop, stack, width/2, height/2)
+	compositeCentered(backdrop, stack, width/2, height/2)
+	if err := os.MkdirAll(filepath.Dir(output), 0o700); err != nil {
 		return err
 	}
-	backdrop := filepath.Join(tempDir, "backdrop.png")
-	if baseImage != "" {
-		if err := runMagick(magick, baseImage, "-auto-orient", "-resize", fmt.Sprintf("%dx%d^", width, height), "-gravity", "center", "-extent", fmt.Sprintf("%dx%d", width, height), backdrop); err != nil {
-			return err
+	file, err := os.Create(output)
+	if err != nil {
+		return err
+	}
+	if err := png.Encode(file, backdrop); err != nil {
+		file.Close()
+		return err
+	}
+	return file.Close()
+}
+
+func loadRenderFonts() error {
+	fontFaces.Do(func() {
+		fontFaces.Arabic, fontFaces.err = parseEmbeddedFont("fonts/Amiri-Regular.ttf")
+		if fontFaces.err == nil {
+			fontFaces.Serif, fontFaces.err = parseEmbeddedFont("fonts/DejaVuSerif.ttf")
 		}
-	} else if err := runMagick(magick, "-size", fmt.Sprintf("%dx%d", width, height), "xc:"+colors.Background, backdrop); err != nil {
-		return err
+		if fontFaces.err == nil {
+			fontFaces.Sans, fontFaces.err = parseEmbeddedFont("fonts/DejaVuSans.ttf")
+		}
+	})
+	return fontFaces.err
+}
+
+func parseEmbeddedFont(path string) (*font.Face, error) {
+	data, err := assets.FS.ReadFile(path)
+	if err != nil {
+		return nil, err
 	}
-	shadow := filepath.Join(tempDir, "shadow.png")
-	if err := runMagick(magick, stack, "-background", "none", "-shadow", "80x10+0+0", shadow); err != nil {
-		return err
+	face, err := font.ParseTTF(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("parse bundled font %s: %w", path, err)
 	}
-	composed := filepath.Join(tempDir, "composed.png")
-	if err := runMagick(magick, backdrop, shadow, "-gravity", "center", "-compose", "over", "-composite", composed); err != nil {
-		return err
+	return face, nil
+}
+
+func renderTextBlock(style textStyle, maxWidth int) (renderedText, error) {
+	text := strings.TrimSpace(style.Text)
+	if text == "" {
+		return renderedText{}, fmt.Errorf("text is empty")
 	}
-	if err := runMagick(magick, composed, stack, "-gravity", "center", "-compose", "over", "-composite", output); err != nil {
-		return err
+	pixelSize := style.Size * 4 / 3
+	input := shaping.Input{Direction: style.Direction, Face: style.Face, Size: fixed.I(pixelSize), Script: style.Script}
+	shaper := &shaping.HarfbuzzShaper{}
+	shape := func(line string) shaping.Output {
+		input.Text = []rune(line)
+		input.RunEnd = len(input.Text)
+		return shaper.Shape(input)
 	}
-	return nil
+	lines := wrapShapedText(text, maxWidth, shape)
+	type textLine struct {
+		Output  shaping.Output
+		Ascent  int
+		Descent int
+		Height  int
+	}
+	lineLayouts := make([]textLine, len(lines))
+	imageHeight := 0
+	for row, line := range lines {
+		out := shape(line)
+		ascent, descent := out.LineBounds.Ascent.Round(), out.LineBounds.Descent.Round()
+		for _, glyph := range out.Glyphs {
+			glyphAscent := (glyph.YBearing + glyph.YOffset).Round()
+			glyphDescent := (glyph.YBearing + glyph.Height + glyph.YOffset).Round()
+			ascent = max(ascent, glyphAscent)
+			descent = min(descent, glyphDescent)
+		}
+		lineHeight := max(pixelSize*6/5, ascent-descent) + 8
+		lineLayouts[row] = textLine{Output: out, Ascent: ascent, Descent: descent, Height: lineHeight}
+		imageHeight += lineHeight
+	}
+	imageHeight = max(1, imageHeight)
+	mask := image.NewAlpha(image.Rect(0, 0, maxWidth, imageHeight))
+	rowY := 0
+	for _, line := range lineLayouts {
+		out := line.Output
+		lineWidth := abs(out.Advance.Round())
+		if lineWidth > maxWidth {
+			return renderedText{}, fmt.Errorf("line width %d exceeds available width %d", lineWidth, maxWidth)
+		}
+		penX := (maxWidth - lineWidth) / 2
+		if out.Direction == di.DirectionRTL && out.Advance < 0 {
+			penX += lineWidth
+		}
+		baseline := rowY + (line.Height-(line.Ascent-line.Descent))/2 + line.Ascent
+		rasterizer := vector.NewRasterizer(maxWidth, imageHeight)
+		for _, glyph := range out.Glyphs {
+			outline, ok := out.Face.GlyphDataOutline(glyph.GlyphID)
+			if !ok {
+				penX += glyph.Advance.Round()
+				continue
+			}
+			dotX := float32(penX) + float32(glyph.XOffset)/64
+			dotY := float32(baseline) - float32(glyph.YOffset)/64
+			scale := float32(out.Size) / 64 / float32(out.Face.Upem())
+			appendGlyphOutline(rasterizer, outline, scale, dotX, dotY)
+			penX += glyph.Advance.Round()
+		}
+		rasterizer.Draw(mask, mask.Bounds(), image.NewUniform(color.Alpha{A: 0xff}), image.Point{})
+		rowY += line.Height
+	}
+	canvas := image.NewRGBA(image.Rect(0, 0, maxWidth, imageHeight))
+	draw.DrawMask(canvas, canvas.Bounds(), image.NewUniform(style.Color), image.Point{}, mask, image.Point{}, draw.Over)
+	return renderedText{Image: canvas, Width: maxWidth, Height: imageHeight}, nil
+}
+
+func appendGlyphOutline(rasterizer *vector.Rasterizer, outline font.GlyphOutline, scale, x, baseline float32) {
+	point := func(p opentype.SegmentPoint) (float32, float32) {
+		return x + p.X*scale, baseline - p.Y*scale
+	}
+	for _, segment := range outline.Segments {
+		args := segment.ArgsSlice()
+		switch segment.Op {
+		case opentype.SegmentOpMoveTo:
+			rasterizer.ClosePath()
+			px, py := point(args[0])
+			rasterizer.MoveTo(px, py)
+		case opentype.SegmentOpLineTo:
+			px, py := point(args[0])
+			rasterizer.LineTo(px, py)
+		case opentype.SegmentOpQuadTo:
+			cx, cy := point(args[0])
+			px, py := point(args[1])
+			rasterizer.QuadTo(cx, cy, px, py)
+		case opentype.SegmentOpCubeTo:
+			c1x, c1y := point(args[0])
+			c2x, c2y := point(args[1])
+			px, py := point(args[2])
+			rasterizer.CubeTo(c1x, c1y, c2x, c2y, px, py)
+		}
+	}
+	rasterizer.ClosePath()
+}
+
+func wrapShapedText(text string, maxWidth int, shape func(string) shaping.Output) []string {
+	words := strings.Fields(text)
+	lines := make([]string, 0, 4)
+	line := ""
+	for _, word := range words {
+		candidate := strings.TrimSpace(line + " " + word)
+		if line != "" && abs(shape(candidate).Advance.Round()) > maxWidth {
+			lines = append(lines, line)
+			line = word
+		} else {
+			line = candidate
+		}
+	}
+	if line != "" {
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func loadBackdrop(path string, width, height int, fallback string) (*image.RGBA, error) {
+	if path == "" {
+		canvas := image.NewRGBA(image.Rect(0, 0, width, height))
+		draw.Draw(canvas, canvas.Bounds(), image.NewUniform(parseColor(fallback)), image.Point{}, draw.Src)
+		return canvas, nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	source, _, err := image.Decode(file)
+	if err != nil {
+		return nil, err
+	}
+	bounds := source.Bounds()
+	scale := math.Max(float64(width)/float64(bounds.Dx()), float64(height)/float64(bounds.Dy()))
+	resizedWidth := int(math.Ceil(float64(bounds.Dx()) * scale))
+	resizedHeight := int(math.Ceil(float64(bounds.Dy()) * scale))
+	resized := image.NewRGBA(image.Rect(0, 0, resizedWidth, resizedHeight))
+	xdraw.CatmullRom.Scale(resized, resized.Bounds(), source, bounds, xdraw.Over, nil)
+	left, top := (resizedWidth-width)/2, (resizedHeight-height)/2
+	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
+	draw.Draw(canvas, canvas.Bounds(), resized, image.Pt(left, top), draw.Src)
+	return canvas, nil
+}
+
+func compositeCentered(backdrop, overlay *image.RGBA, centerX, centerY int) {
+	left, top := centerX-overlay.Bounds().Dx()/2, centerY-overlay.Bounds().Dy()/2
+	draw.Draw(backdrop, image.Rect(left, top, left+overlay.Bounds().Dx(), top+overlay.Bounds().Dy()), overlay, image.Point{}, draw.Over)
+}
+
+func shadowText(backdrop, text *image.RGBA, centerX, centerY int) {
+	width, height := text.Bounds().Dx(), text.Bounds().Dy()
+	mask := image.NewAlpha(text.Bounds())
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			mask.SetAlpha(x, y, color.Alpha{A: text.RGBAAt(x, y).A})
+		}
+	}
+	blurAlpha(mask, 10)
+	shadow := image.NewRGBA(text.Bounds())
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			a := mask.AlphaAt(x, y).A * 204 / 255
+			shadow.SetRGBA(x, y, color.RGBA{A: a})
+		}
+	}
+	left, top := centerX-width/2, centerY-height/2
+	draw.Draw(backdrop, image.Rect(left, top, left+width, top+height), shadow, image.Point{}, draw.Over)
+}
+
+func blurAlpha(mask *image.Alpha, radius int) {
+	if radius <= 0 {
+		return
+	}
+	width, height := mask.Bounds().Dx(), mask.Bounds().Dy()
+	temp := make([]uint8, width*height)
+	kernel := make([]float64, 2*radius+1)
+	sigma := float64(radius)
+	sum := 0.0
+	for i := -radius; i <= radius; i++ {
+		value := math.Exp(-float64(i*i) / (2 * sigma * sigma))
+		kernel[i+radius] = value
+		sum += value
+	}
+	for i := range kernel {
+		kernel[i] /= sum
+	}
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			value := 0.0
+			for k := -radius; k <= radius; k++ {
+				xx := min(width-1, max(0, x+k))
+				value += float64(mask.AlphaAt(xx, y).A) * kernel[k+radius]
+			}
+			temp[y*width+x] = uint8(value + 0.5)
+		}
+	}
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			value := 0.0
+			for k := -radius; k <= radius; k++ {
+				yy := min(height-1, max(0, y+k))
+				value += float64(temp[yy*width+x]) * kernel[k+radius]
+			}
+			mask.SetAlpha(x, y, color.Alpha{A: uint8(value + 0.5)})
+		}
+	}
+}
+
+func parseColor(value string) color.RGBA {
+	if len(value) != 7 || value[0] != '#' {
+		return color.RGBA{R: 255, G: 255, B: 255, A: 255}
+	}
+	var red, green, blue uint8
+	_, err := fmt.Sscanf(value, "#%02x%02x%02x", &red, &green, &blue)
+	if err != nil {
+		return color.RGBA{R: 255, G: 255, B: 255, A: 255}
+	}
+	return color.RGBA{R: red, G: green, B: blue, A: 255}
+}
+
+func abs(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func fetchAyahText(surah, ayah int) (ayahText, error) {
@@ -147,7 +421,6 @@ func fetchAyahText(surah, ayah int) (ayahText, error) {
 	}, nil
 }
 
-// fetchAyahEditions fetches and validates the two ayah editions (Arabic + English).
 func fetchAyahEditions(ctx context.Context, url string) ([]ayahEdition, error) {
 	var response struct {
 		Data []ayahEdition `json:"data"`
@@ -163,25 +436,22 @@ func fetchAyahEditions(ctx context.Context, url string) ([]ayahEdition, error) {
 
 func (r Runtime) currentColors() themeColors {
 	colors := themeColors{Accent: "#d6b858", Foreground: "#f2eee0", Muted: "#c3bfae", Background: "#101b18"}
-	paths := []string{filepath.Join(r.Config.Home, ".local", "state", "omarchy", "current", "theme", "colors.toml")}
-	for _, path := range paths {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		for _, match := range colorPattern.FindAllStringSubmatch(string(data), -1) {
-			switch match[1] {
-			case "accent":
-				colors.Accent = match[2]
-			case "foreground":
-				colors.Foreground = match[2]
-			case "muted":
-				colors.Muted = match[2]
-			case "background":
-				colors.Background = match[2]
-			}
-		}
+	path := filepath.Join(r.Config.Home, ".local", "state", "omarchy", "current", "theme", "colors.toml")
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return colors
+	}
+	for _, match := range colorPattern.FindAllStringSubmatch(string(data), -1) {
+		switch match[1] {
+		case "accent":
+			colors.Accent = match[2]
+		case "foreground":
+			colors.Foreground = match[2]
+		case "muted":
+			colors.Muted = match[2]
+		case "background":
+			colors.Background = match[2]
+		}
 	}
 	return colors
 }
@@ -206,26 +476,6 @@ func (r Runtime) screenSize() (int, int) {
 	return 1920, 1080
 }
 
-func imageSize(magick, path string) (int, int, error) {
-	output, err := exec.Command(magick, "identify", "-format", "%w %h", path).Output()
-	if err != nil {
-		return 0, 0, err
-	}
-	var width, height int
-	if _, err := fmt.Sscanf(string(output), "%d %d", &width, &height); err != nil {
-		return 0, 0, err
-	}
-	return width, height, nil
-}
-
-func runMagick(magick string, args ...string) error {
-	cmd := exec.Command(magick, args...)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("magick: %s: %w", strings.TrimSpace(string(output)), err)
-	}
-	return nil
-}
-
 func trimEdgeQuote(text string) string {
 	text = strings.TrimSpace(text)
 	runes := []rune(text)
@@ -244,4 +494,8 @@ func trimEdgeQuote(text string) string {
 		}
 	}
 	return strings.TrimSpace(string(runes))
+}
+
+func init() {
+	image.RegisterFormat("webp", "RIFF????WEBP", webp.Decode, webp.DecodeConfig)
 }
