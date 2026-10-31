@@ -1,0 +1,437 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PLUGIN_DIR="$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")"
+THEME_DIR="${PEACE_THEME_DIR:-$HOME/.config/omarchy/themes/peace}"
+STATE="$HOME/.local/state/peace"
+CACHE="$HOME/.cache/peace"
+FOLLOW_CACHE="$CACHE/follow"
+PLAY_FILE="$STATE/play.json"
+PID_FILE="$STATE/mpv.pid"
+SUPERVISOR_FILE="$STATE/follow.pid"
+FOLLOWING_FILE="$STATE/following"
+if [[ -n ${XDG_RUNTIME_DIR:-} ]]; then SOCK="$XDG_RUNTIME_DIR/peace-mpv.sock"; else SOCK="/tmp/peace-mpv-${UID}.sock"; fi
+SURAH_CACHE="$CACHE/surahs.json"
+
+usage() {
+  cat <<'HELP'
+Usage: peace listen SURAH[:AYAH|:START-END|:START-] [--reciter ID] [--follow] [--buffer N] [--lead N] [--jobs N]
+Examples: peace listen 55 | 55:5 | 55:5-10 | 55:5- --follow --buffer 6 --lead 2 --jobs 2
+HELP
+}
+
+mpv_alive() {
+  local pid
+  [[ -r $PID_FILE ]] || return 1
+  pid="$(<"$PID_FILE")"
+  [[ $pid =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  [[ -r /proc/$pid/cmdline ]] && tr '\0' ' ' 2>/dev/null < "/proc/$pid/cmdline" | grep -Fq -- "--input-ipc-server=$SOCK"
+}
+send_ipc() { printf '%s\n' "$1" | socat - "UNIX-CONNECT:$SOCK" 2>/dev/null; }
+query_property() {
+  local response
+  response="$(send_ipc "{\"command\":[\"get_property\",\"$1\"]}")" || return 1
+  jq -r 'if has("data") then .data else empty end' <<<"$response"
+}
+log_event() { printf '[%s] %s\n' "$(date --iso-8601=seconds)" "$*" >> "$STATE/follow.log"; }
+
+stop_prep_jobs() {
+  local pid_file pid
+  for pid_file in "$STATE"/prep-*.pid; do
+    [[ -r $pid_file ]] || continue
+    pid="$(<"$pid_file")"
+    [[ $pid =~ ^[0-9]+$ ]] && kill -- -"$pid" 2>/dev/null || true
+  done
+}
+
+stop_all() {
+  local mpv_pid="" supervisor_pid=""
+  [[ -r $PID_FILE ]] && mpv_pid="$(<"$PID_FILE")"
+  [[ -r $SUPERVISOR_FILE ]] && supervisor_pid="$(<"$SUPERVISOR_FILE")"
+  mpv_alive && kill "$mpv_pid" 2>/dev/null || true
+  [[ $supervisor_pid =~ ^[0-9]+$ ]] && kill "$supervisor_pid" 2>/dev/null || true
+  stop_prep_jobs
+  for _ in {1..30}; do
+    alive=false
+    mpv_alive && alive=true
+    [[ $supervisor_pid =~ ^[0-9]+$ ]] && kill -0 "$supervisor_pid" 2>/dev/null && alive=true
+    [[ $alive == false ]] && break
+    sleep 0.1
+  done
+  stop_prep_jobs
+  rm -f -- "$SOCK" "$PID_FILE" "$PLAY_FILE" "$SUPERVISOR_FILE" "$FOLLOWING_FILE" "$STATE/displayed-ayah" "$STATE"/prep-*.pid "$CACHE"/.peace-*.tmp.*
+  rm -rf -- "$FOLLOW_CACHE"
+}
+
+update_play_state() {
+  local ready="$1" preparing="$2" appended="$3" tmp="$PLAY_FILE.tmp"
+  jq --argjson ready "$ready" --argjson preparing "$preparing" --argjson appended "$appended" \
+    '.ready=$ready | .preparing=$preparing | .appended=$appended' "$PLAY_FILE" > "$tmp"
+  mv -f -- "$tmp" "$PLAY_FILE"
+}
+
+if [[ ${1-} == __prepare ]]; then
+  shift
+  prepare_surah="$1" prepare_ayah="$2" audio_url="$3"
+  prepare_ref="$prepare_surah:$prepare_ayah"
+  prepare_png="$FOLLOW_CACHE/$prepare_surah-$prepare_ayah.png"
+  prepare_audio="$FOLLOW_CACHE/$prepare_surah-$prepare_ayah.mp3"
+  prepare_png_tmp="$CACHE/.peace-$prepare_surah-$prepare_ayah.tmp.$BASHPID.png"
+  prepare_audio_tmp="$CACHE/.peace-$prepare_surah-$prepare_ayah.tmp.$BASHPID.mp3"
+  mkdir -p "$STATE" "$FOLLOW_CACHE"
+  trap 'rm -f -- "$prepare_png_tmp" "$prepare_audio_tmp"' EXIT
+
+  download_audio() {
+    local attempt
+    for attempt in 1 2; do
+      if curl -fsSL --connect-timeout 8 --max-time 20 --output "$prepare_audio_tmp" "$audio_url" 2>/dev/null && [[ -s $prepare_audio_tmp ]]; then
+        mv -f -- "$prepare_audio_tmp" "$prepare_audio"
+        log_event "audio cached $prepare_ref"
+        return 0
+      fi
+      rm -f -- "$prepare_audio_tmp"
+      log_event "audio cache failed $prepare_ref (attempt $attempt)"
+    done
+    : > "$FOLLOW_CACHE/$prepare_surah-$prepare_ayah.audio-fail"
+    log_event "audio cache unavailable $prepare_ref; mpv will stream the source URL"
+  }
+
+  download_audio &
+  audio_pid=$!
+  for attempt in 1 2; do
+    if nice -n 15 "$THEME_DIR/bin/peace-wallpaper" --ref "$prepare_ref" --out "$prepare_png_tmp"; then
+      mv -f -- "$prepare_png_tmp" "$prepare_png"
+      log_event "render finished $prepare_ref (attempt $attempt)"
+      break
+    fi
+    rm -f -- "$prepare_png_tmp"
+    log_event "render failed $prepare_ref (attempt $attempt)"
+  done
+  if [[ ! -s $prepare_png ]]; then
+    : > "$FOLLOW_CACHE/$prepare_surah-$prepare_ayah.skip"
+    log_event "render skipped $prepare_ref after two failures"
+  fi
+  wait "$audio_pid" || true
+  exit 0
+fi
+
+COMMAND_NAME="${PEACE_COMMAND_NAME:-${0##*/}}"
+if [[ ${1-} == --help || ${1-} == -h ]]; then
+  case "$COMMAND_NAME" in
+    peace-pause) echo 'Usage: peace pause'; echo 'Toggle audio pause or resume.' ;;
+    peace-stop) echo 'Usage: peace stop'; echo 'Stop audio and follow preparation.' ;;
+    peace-status) echo 'Usage: peace status'; echo 'Show the current ayah and playback state.' ;;
+    *) usage ;;
+  esac
+  exit 0
+fi
+if [[ $COMMAND_NAME == peace-pause || $COMMAND_NAME == peace-stop || $COMMAND_NAME == peace-status ]]; then
+  if (($#)); then echo "$COMMAND_NAME: unexpected argument '$1'" >&2; exit 2; fi
+fi
+
+if [[ $COMMAND_NAME == peace-pause ]]; then
+  if ! mpv_alive || ! command -v socat >/dev/null 2>&1; then echo 'not playing' >&2; exit 1; fi
+  send_ipc '{"command":["cycle","pause"]}' >/dev/null || { echo 'not playing' >&2; exit 1; }
+  exit 0
+fi
+if [[ $COMMAND_NAME == peace-stop ]]; then stop_all; exit 0; fi
+if [[ $COMMAND_NAME == peace-status ]]; then
+  if mpv_alive && [[ -r $PLAY_FILE ]] && [[ $(jq -r '.preparing // false' "$PLAY_FILE") == true ]]; then
+    ready="$(jq -r '.ready // 0' "$PLAY_FILE")"; lead="$(jq -r '.lead // 1' "$PLAY_FILE")"
+    echo "preparing ($ready/$lead ready)"
+    exit 0
+  fi
+  if ! mpv_alive; then echo 'not playing'; exit 0; fi
+  if ! command -v socat >/dev/null 2>&1 || [[ ! -r $PLAY_FILE ]]; then echo 'playing'; exit 0; fi
+  pos="$(query_property playlist-pos || true)"
+  [[ $pos =~ ^[0-9]+$ ]] || { echo 'playing'; exit 0; }
+  read -r start end surah reciter follow < <(jq -r '[.start,.end,.surah,.reciter,(if .follow then "yes" else "no" end)]|@tsv' "$PLAY_FILE")
+  ayah=$((start + pos))
+  ((ayah > end)) && ayah=$end
+  line="playing $surah:$ayah (reciter $reciter"
+  if [[ $follow == yes && -r $SUPERVISOR_FILE ]] && kill -0 "$(<"$SUPERVISOR_FILE")" 2>/dev/null; then line+=", following"; fi
+  echo "$line)"
+  exit 0
+fi
+
+if [[ ${1-} == __follow ]]; then
+  buffer="$(jq -r .buffer "$PLAY_FILE")"
+  lead="$(jq -r .lead "$PLAY_FILE")"
+  jobs="$(jq -r .jobs "$PLAY_FILE")"
+  surah="$(jq -r .surah "$PLAY_FILE")"
+  start="$(jq -r .start "$PLAY_FILE")"
+  end="$(jq -r .end "$PLAY_FILE")"
+  total=$((end - start + 1))
+  prep_count="$lead"
+  ((prep_count > total)) && prep_count=$total
+  ((prep_count > buffer + 2)) && prep_count=$((buffer + 2))
+  prep_end=$((start + prep_count - 1))
+  LOG="$STATE/follow.log"
+  mkdir -p "$FOLLOW_CACHE" "$STATE"
+  echo "$$" > "$FOLLOWING_FILE"
+  echo "$$" > "$SUPERVISOR_FILE"
+  log_event "follow started $surah:$start-$end (lead $prep_count, jobs $jobs, buffer $buffer)"
+
+  declare -A prep_pids=()
+  append_index=0
+  current_ayah=0
+  last_title=""
+  wait_ref=""
+  wait_started=0
+  prep_started="$(date +%s)"
+  last_progress=0
+  warmup=true
+  trap 'stop_prep_jobs; if mpv_alive; then kill "$(<"$PID_FILE")" 2>/dev/null || true; fi; rm -f "$FOLLOWING_FILE" "$SUPERVISOR_FILE" "$PID_FILE" "$PLAY_FILE" "$STATE"/prep-*.pid "$CACHE"/.peace-*.tmp.*; rm -rf "$FOLLOW_CACHE"' EXIT
+  trap 'exit 0' TERM INT
+
+  while mpv_alive; do
+    now="$(date +%s)"
+    idle="$(query_property idle-active || true)"
+    pos="$(query_property playlist-pos || true)"
+    count="$(query_property playlist-count || true)"
+    title="$(query_property media-title || true)"
+    paused="$(query_property pause || true)"
+    playing_ayah=""
+    if [[ $idle != true ]]; then
+      if [[ $title =~ ^${surah}:([0-9]+)$ ]]; then
+        playing_ayah="${BASH_REMATCH[1]}"
+      elif [[ $pos =~ ^[0-9]+$ ]]; then
+        playing_ayah=$((start + pos))
+        title="$surah:$playing_ayah"
+      fi
+    fi
+    if [[ -n $playing_ayah ]]; then
+      current_ayah="$playing_ayah"
+      if [[ $title != "$last_title" ]]; then
+        [[ -z $last_title ]] || log_event "audio transition from $last_title"
+        log_event "audio started $title"
+        last_title="$title"
+      fi
+      if [[ -s $FOLLOW_CACHE/$surah-$current_ayah.png ]]; then
+        displayed="$(cat "$STATE/displayed-ayah" 2>/dev/null || true)"
+        if [[ $displayed != "$surah-$current_ayah" ]]; then
+          stamp="$(date +%s%3N)"
+          background_dir="$HOME/.config/omarchy/backgrounds/peace"
+          mkdir -p "$background_dir"
+          background="$background_dir/follow-$stamp.png"
+          cp -- "$FOLLOW_CACHE/$surah-$current_ayah.png" "$background"
+          if omarchy theme bg set "$background" >/dev/null 2>&1; then
+            echo "$surah-$current_ayah" > "$STATE/displayed-ayah"
+            log_event "wallpaper switched $surah:$current_ayah"
+            find "$background_dir" -maxdepth 1 -type f -name 'follow-*.png' -printf '%T@ %p\0' | sort -z -nr | tail -z -n +3 | while IFS= read -r -d '' item; do rm -f -- "${item#* }"; done
+          else
+            rm -f -- "$background"
+            log_event "wallpaper switch failed $surah:$current_ayah"
+          fi
+        fi
+      fi
+    fi
+
+    if ((current_ayah > 0)); then
+      displayed="$(cat "$STATE/displayed-ayah" 2>/dev/null || true)"
+      for stale in "$FOLLOW_CACHE"/"$surah"-*.png "$FOLLOW_CACHE"/"$surah"-*.mp3 "$FOLLOW_CACHE"/"$surah"-*.skip "$FOLLOW_CACHE"/"$surah"-*.audio-fail; do
+        [[ -e $stale ]] || continue
+        stale_ayah="${stale##*/}"; stale_ayah="${stale_ayah#*-}"; stale_ayah="${stale_ayah%%.*}"
+        if ((stale_ayah < current_ayah)) && [[ "$surah-$stale_ayah" != "$displayed" ]]; then rm -f -- "$stale"; fi
+      done
+    fi
+
+    if [[ $warmup == true ]]; then
+      ready=0
+      wallpapers_ready=0
+      for ((warm_ayah=start; warm_ayah<=prep_end; warm_ayah++)); do
+        image_ready=false
+        [[ -s $FOLLOW_CACHE/$surah-$warm_ayah.png ]] && image_ready=true
+        [[ -e $FOLLOW_CACHE/$surah-$warm_ayah.skip ]] && image_ready=true
+        [[ $image_ready == true ]] && ((wallpapers_ready+=1))
+        [[ -s $FOLLOW_CACHE/$surah-$warm_ayah.png && -s $FOLLOW_CACHE/$surah-$warm_ayah.mp3 ]] && ((ready+=1))
+      done
+      update_play_state "$wallpapers_ready" true "$append_index"
+      first_audio_ready=false
+      [[ -s $FOLLOW_CACHE/$surah-$start.mp3 || -e $FOLLOW_CACHE/$surah-$start.audio-fail ]] && first_audio_ready=true
+      if ((wallpapers_ready >= prep_count)) && [[ $first_audio_ready == true ]]; then
+        warmup=false
+        update_play_state "$wallpapers_ready" false "$append_index"
+        printf '\n'
+        log_event "startup lead satisfied ($wallpapers_ready/$prep_count wallpapers ready; first audio resolved)"
+      elif ((now >= prep_started + 45)); then
+        for ((warm_ayah=start; warm_ayah<=prep_end; warm_ayah++)); do
+          if [[ ! -s $FOLLOW_CACHE/$surah-$warm_ayah.png || ! -s $FOLLOW_CACHE/$surah-$warm_ayah.mp3 ]]; then
+            prep_pid="${prep_pids[$warm_ayah]-}"
+            if [[ $prep_pid =~ ^[0-9]+$ ]]; then
+              kill -- -"$prep_pid" 2>/dev/null || true
+              wait "$prep_pid" 2>/dev/null || true
+              unset 'prep_pids[$warm_ayah]'
+              rm -f -- "$STATE/prep-$warm_ayah.pid" "$FOLLOW_CACHE/$surah-$warm_ayah.png" "$FOLLOW_CACHE/$surah-$warm_ayah.mp3"
+            fi
+            [[ -s $FOLLOW_CACHE/$surah-$warm_ayah.png ]] || : > "$FOLLOW_CACHE/$surah-$warm_ayah.skip"
+            [[ -s $FOLLOW_CACHE/$surah-$warm_ayah.mp3 ]] || : > "$FOLLOW_CACHE/$surah-$warm_ayah.audio-fail"
+            log_event "startup preparation timed out $surah:$warm_ayah; allowing safe fallback"
+          fi
+        done
+      elif ((now > last_progress)); then
+        printf 'Preparing wallpapers (%s/%s)...\n' "$wallpapers_ready" "$prep_count"
+        last_progress=$now
+      fi
+    fi
+
+    append_limit=$((current_ayah > 0 ? current_ayah - start + 1 : 0))
+    append_limit=$((append_limit + buffer))
+    ((append_limit > total)) && append_limit=$total
+    if [[ $warmup == false ]] && ((append_index < append_limit)); then
+      next_ayah=$((start + append_index))
+      next_png="$FOLLOW_CACHE/$surah-$next_ayah.png"
+      next_audio="$FOLLOW_CACHE/$surah-$next_ayah.mp3"
+      next_skip="$FOLLOW_CACHE/$surah-$next_ayah.skip"
+      next_audio_fail="$FOLLOW_CACHE/$surah-$next_ayah.audio-fail"
+      if [[ -z $wait_ref || $wait_ref != "$surah:$next_ayah" ]]; then
+        wait_ref="$surah:$next_ayah"
+        wait_started="$now"
+      fi
+      if [[ $warmup == false ]] && ((now - wait_started >= 45)) && \
+        [[ ! -s $next_png || ( ! -s $next_audio && ! -e $next_audio_fail ) ]]; then
+        prep_pid="${prep_pids[$next_ayah]-}"
+        if [[ $prep_pid =~ ^[0-9]+$ ]]; then
+          kill -- -"$prep_pid" 2>/dev/null || true
+          wait "$prep_pid" 2>/dev/null || true
+          unset 'prep_pids[$next_ayah]'
+          rm -f -- "$STATE/prep-$next_ayah.pid"
+        fi
+        [[ -s $next_png ]] || : > "$next_skip"
+        [[ -s $next_audio ]] || : > "$next_audio_fail"
+        log_event "45-second preparation timeout $wait_ref; allowing image/audio fallback"
+      fi
+      image_resolved=false; audio_resolved=false
+      [[ -s $next_png || -e $next_skip ]] && image_resolved=true
+      [[ -s $next_audio || -e $next_audio_fail ]] && audio_resolved=true
+      if [[ $image_resolved == true && $audio_resolved == true ]]; then
+        audio_source="$next_audio"
+        [[ -s $next_audio ]] || audio_source="$(jq -r --argjson index "$append_index" '.audio_urls[$index]' "$PLAY_FILE")"
+        title_value="$surah:$next_ayah"
+        load_command="$(jq -cn --arg url "$audio_source" --arg title "$title_value" '{command:["loadfile",$url,"append-play",{"force-media-title":$title}],request_id:1}')"
+        reply="$(send_ipc "$load_command" || true)"
+        if [[ $(jq -r '.error // ""' <<<"$reply" 2>/dev/null) == success ]]; then
+          image_reason=ready; [[ -s $next_png ]] || image_reason=skipped
+          audio_reason=cached; [[ -s $next_audio ]] || audio_reason=streaming-fallback
+          log_event "appended $title_value (wallpaper $image_reason, audio $audio_reason)"
+          ((append_index+=1))
+          wait_ref=""
+          update_play_state "$ready" false "$append_index"
+        else
+          log_event "mpv rejected append for $title_value: ${reply:-no IPC response}"
+        fi
+      fi
+    fi
+
+    if [[ $warmup == true ]]; then
+      base=$start; window=$prep_count
+    elif ((current_ayah > 0)); then
+      base=$((current_ayah + 1)); window=$buffer
+    else
+      base=$((start + append_index)); window=$buffer
+      if [[ $paused == true ]]; then window=$((buffer - append_index)); fi
+    fi
+    target_end=$((base + window - 1))
+    ((target_end > end)) && target_end=$end
+    ready_ahead=0
+    for ((candidate=base; candidate<=target_end; candidate++)); do
+      [[ -s $FOLLOW_CACHE/$surah-$candidate.png && -s $FOLLOW_CACHE/$surah-$candidate.mp3 ]] && ((ready_ahead+=1))
+    done
+    concurrency=1
+    if [[ $warmup == true ]] || ((ready_ahead < 3)); then concurrency=$jobs; fi
+    active_preparations=0
+    for candidate in "${!prep_pids[@]}"; do
+      prep_pid="${prep_pids[$candidate]}"
+      if kill -0 "$prep_pid" 2>/dev/null; then ((active_preparations+=1))
+      else wait "$prep_pid" 2>/dev/null || true; unset 'prep_pids[$candidate]'; rm -f -- "$STATE/prep-$candidate.pid"; fi
+    done
+    for ((candidate=base; candidate<=target_end && active_preparations<concurrency; candidate++)); do
+      [[ -s $FOLLOW_CACHE/$surah-$candidate.png && -s $FOLLOW_CACHE/$surah-$candidate.mp3 ]] && continue
+      [[ -e $FOLLOW_CACHE/$surah-$candidate.skip && -e $FOLLOW_CACHE/$surah-$candidate.audio-fail ]] && continue
+      [[ -n ${prep_pids[$candidate]-} ]] && continue
+      audio_url="$(jq -r --argjson index "$((candidate-start))" '.audio_urls[$index]' "$PLAY_FILE")"
+      setsid "$PLUGIN_DIR/bin/peace-listen" __prepare "$surah" "$candidate" "$audio_url" </dev/null >>"$LOG" 2>&1 &
+      prep_pid=$!
+      prep_pids[$candidate]="$prep_pid"
+      echo "$prep_pid" > "$STATE/prep-$candidate.pid"
+      ((active_preparations+=1))
+      log_event "preparation started $surah:$candidate"
+    done
+
+    if ((append_index >= total)) && [[ $idle == true ]] && [[ $count =~ ^[0-9]+$ ]] && ((count >= total)); then
+      log_event "playback complete"
+      send_ipc '{"command":["quit"],"request_id":2}' >/dev/null || true
+      break
+    fi
+    sleep 0.2
+  done
+  exit 0
+fi
+
+if [[ ${1-} == --help || ${1-} == -h ]]; then usage; exit 0; fi
+if (($# == 0)); then usage >&2; exit 2; fi
+REF="$1"; shift
+RECITER="${PEACE_RECITER:-ar.alafasy}"; FOLLOW=false; BUFFER=10; LEAD=2; JOBS=2
+while (($#)); do
+  case "$1" in
+    --reciter) (($# >= 2)) || { echo 'peace listen: --reciter requires an ID' >&2; exit 2; }; RECITER="$2"; shift 2 ;;
+    --follow) FOLLOW=true; shift ;;
+    --buffer) (($# >= 2)) || { echo 'peace listen: --buffer requires N' >&2; exit 2; }; BUFFER="$2"; shift 2 ;;
+    --lead) (($# >= 2)) || { echo 'peace listen: --lead requires N' >&2; exit 2; }; LEAD="$2"; shift 2 ;;
+    --jobs) (($# >= 2)) || { echo 'peace listen: --jobs requires N' >&2; exit 2; }; JOBS="$2"; shift 2 ;;
+    *) echo "peace listen: unknown option '$1'" >&2; exit 2 ;;
+  esac
+done
+if ! [[ $BUFFER =~ ^[0-9]+$ ]] || ((BUFFER < 1 || BUFFER > 20)); then echo 'peace listen: --buffer must be between 1 and 20' >&2; exit 2; fi
+if ! [[ $LEAD =~ ^[0-9]+$ ]] || ((LEAD < 1 || LEAD > 5)); then echo 'peace listen: --lead must be between 1 and 5' >&2; exit 2; fi
+if ! [[ $JOBS =~ ^[0-9]+$ ]] || ((JOBS < 1 || JOBS > 4)); then echo 'peace listen: --jobs must be between 1 and 4' >&2; exit 2; fi
+if ! [[ $RECITER =~ ^[A-Za-z0-9._-]+$ ]]; then echo 'peace listen: invalid reciter ID' >&2; exit 2; fi
+if ! [[ $REF =~ ^([0-9]+)(:([0-9]+)(-([0-9]*)?)?)?$ ]]; then echo "peace listen: invalid reference '$REF' (expected SURAH[:AYAH|:START-END|:START-])" >&2; exit 2; fi
+SURAH="${BASH_REMATCH[1]}"; START="${BASH_REMATCH[3]:-1}"; END="${BASH_REMATCH[5]:-}"
+if ((SURAH < 1 || SURAH > 114)); then echo 'peace listen: surah must be between 1 and 114' >&2; exit 2; fi
+stop_all
+if [[ -z $END ]]; then END="$START"; [[ $REF == "$SURAH" || $REF == *- ]] && END=0; fi
+mkdir -p "$CACHE" "$STATE"
+if [[ ! -s $SURAH_CACHE || $(($(date +%s) - $(stat -c %Y "$SURAH_CACHE"))) -gt 2592000 ]]; then
+  table="$(curl -fsSL --connect-timeout 8 --max-time 20 https://api.alquran.cloud/v1/surah 2>/dev/null | jq -ce '[.data[] | {number, numberOfAyahs}]' 2>/dev/null)" || { echo 'peace listen: unable to fetch surah list from AlQuran Cloud' >&2; exit 1; }
+  printf '%s\n' "$table" > "$SURAH_CACHE.tmp" && mv "$SURAH_CACHE.tmp" "$SURAH_CACHE"
+fi
+COUNT="$(jq -r --argjson s "$SURAH" '.[] | select(.number==$s) | .numberOfAyahs' "$SURAH_CACHE")"
+if [[ -z $COUNT || ! $START =~ ^[0-9]+$ ]] || ((START < 1)); then echo 'peace listen: invalid ayah number' >&2; exit 2; fi
+if ((END == 0)); then END=$COUNT; fi
+if ((START > COUNT || END > COUNT)); then echo "peace listen: surah $SURAH has $COUNT ayahs" >&2; exit 2; fi
+if ((START > END)); then echo 'peace listen: ayah range start must be less than or equal to end' >&2; exit 2; fi
+TOTAL=$((END - START + 1))
+((LEAD > TOTAL)) && LEAD=$TOTAL
+SURAH_JSON="$(curl -fsSL --connect-timeout 8 --max-time 25 "https://api.alquran.cloud/v1/surah/$SURAH/$RECITER" 2>/dev/null)" || { echo "peace listen: unable to fetch audio for surah $SURAH ($RECITER)" >&2; exit 1; }
+URLS_JSON="$(jq -ce --argjson start "$START" --argjson end "$END" '[.data.ayahs[] | select(.numberInSurah >= $start and .numberInSurah <= $end) | .audio] | if length == ($end-$start+1) and all(.[]; type=="string" and length>0) then . else error("missing audio URLs") end' <<<"$SURAH_JSON" 2>/dev/null)" || { echo "peace listen: audio URLs missing for surah $SURAH ($RECITER)" >&2; exit 1; }
+command -v mpv >/dev/null 2>&1 || { echo 'peace listen: mpv is required (install with: omarchy pkg add mpv)' >&2; exit 1; }
+active_theme="$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null || true)"
+if [[ $FOLLOW == true && $active_theme != peace ]]; then echo "peace listen: warning: active theme is '$active_theme'; playing audio without wallpaper follow" >&2; FOLLOW=false; fi
+if [[ $FOLLOW == true ]] && ! command -v socat >/dev/null 2>&1; then echo 'peace listen: warning: socat is missing; --follow unavailable' >&2; FOLLOW=false; fi
+mkdir -p "$STATE"
+if [[ $FOLLOW == true ]]; then
+  jq -n --argjson surah "$SURAH" --argjson start "$START" --argjson end "$END" --arg reciter "$RECITER" --argjson urls "$URLS_JSON" --argjson buffer "$BUFFER" --argjson lead "$LEAD" --argjson jobs "$JOBS" \
+    '{surah:$surah,start:$start,end:$end,reciter:$reciter,follow:true,audio_urls:$urls,buffer:$buffer,lead:$lead,jobs:$jobs,preparing:true,ready:0,appended:0}' > "$PLAY_FILE"
+  setsid "$PLUGIN_DIR/lib/peace-mpv-launch" "$PID_FILE" \
+    mpv --idle=yes --no-video --no-terminal --really-quiet --gapless-audio=yes --prefetch-playlist=yes --input-ipc-server="$SOCK" \
+    </dev/null >/dev/null 2>&1 &
+else
+  jq -n --argjson surah "$SURAH" --argjson start "$START" --argjson end "$END" --arg reciter "$RECITER" '{surah:$surah,start:$start,end:$end,reciter:$reciter,follow:false,preparing:false}' > "$PLAY_FILE"
+  PLAYLIST=(); while IFS= read -r url; do PLAYLIST+=("$url"); done < <(jq -r '.[]' <<<"$URLS_JSON")
+  setsid "$PLUGIN_DIR/lib/peace-mpv-launch" "$PID_FILE" \
+    mpv --no-video --no-terminal --really-quiet --gapless-audio=yes --prefetch-playlist=yes --input-ipc-server="$SOCK" "${PLAYLIST[@]}" \
+    </dev/null >/dev/null 2>&1 &
+fi
+for _ in {1..20}; do [[ -s $PID_FILE ]] && break; sleep 0.05; done
+if [[ ! -s $PID_FILE ]] || ! kill -0 "$(<"$PID_FILE")" 2>/dev/null; then
+  echo 'peace listen: unable to start mpv' >&2
+  stop_all
+  exit 1
+fi
+if [[ $FOLLOW == true ]]; then
+  setsid "$PLUGIN_DIR/bin/peace" __follow </dev/null &
+  echo 'Preparing, playback starts in a few seconds'
+fi
+exit 0
