@@ -9,9 +9,6 @@ Quran recitation and ayah wallpaper follow. The plugin owns the listening comman
     peace stop
     peace status
     peace wallpaper [random|next|prev] [--random]
-    peace install
-
-Aliases (installed in `~/.local/bin`): `peace-listen`, `peace-pause`, `peace-stop`, `peace-status`.
 
     peace listen 55
     peace listen 55:5-10 --follow --buffer 6 --lead 2 --jobs 2
@@ -29,10 +26,31 @@ Follow works with any active Omarchy theme. It starts audio immediately, then ca
 
 The repository ships a statically linked Linux x86_64 Go command at `bin/peace`; users do not need Go, `curl`, `jq`, `socat`, ImageMagick, Pango, or system fonts. To rebuild it from source on Linux x86_64:
 
-    make build          # go build -trimpath -ldflags="-s -w" -o bin/peace ./cmd/peace
-    make install        # go install -trimpath -ldflags="-s -w" ./cmd/peace
-    make clean          # rm -f bin/peace
-    make uninstall      # rm -f "$(GO_BIN)/peace"
+```sh
+make build
+make install
+make clean
+make uninstall
+```
+
+## Install and remove from Omarchy
+
+Install the plugin from its GitHub repository, then enable its bar widget:
+
+```sh
+omarchy plugin add https://github.com/sohanemon/omapeace
+omarchy plugin enable io.github.sohanemon.omapeace
+```
+
+The bar widget runs the compiled binary directly; no extra setup is needed to use it. The binary is at `~/.config/omarchy/plugins/io.github.sohanemon.omapeace/bin/peace` after installation.
+
+Remove the plugin from Omarchy with:
+
+```sh
+omarchy plugin remove io.github.sohanemon.omapeace
+```
+
+Omarchy adds new plugins disabled until enabled. [Omarchy plugin documentation](https://github.com/omacom/omarchy/blob/quattro/docs/omarchy-shell.md#installing-a-third-party-plugin)
 
 Audio playback uses `mpv`, and wallpaper changes use Omarchy's wallpaper command. Text shaping, font data, image decoding, and wallpaper composition are built into the command.
 

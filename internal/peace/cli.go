@@ -80,7 +80,6 @@ func newRootCommand(runtime Runtime, executable string) *cobra.Command {
 		addWallpaperFlag(cmd)
 		root.AddCommand(cmd)
 	}
-	root.AddCommand(&cobra.Command{Use: "install", Short: "Install Peace command links", Long: "Install the peace command and convenience links in ~/.local/bin.", Example: "  peace install", Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.installCommands() }})
 	root.AddCommand(&cobra.Command{Use: "__follow", Hidden: true, Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.follow() }})
 	root.AddCommand(&cobra.Command{Use: "__prepare SURAH AYAH", Hidden: true, Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, args []string) error { return runtime.prepare(args) }})
 	for _, action := range []string{"init", "uninstall", "enable", "disable", "logs"} {
@@ -236,46 +235,6 @@ func newWallpaperCommand(runtime Runtime, use, short, example string) *cobra.Com
 
 func addWallpaperFlag(cmd *cobra.Command) {
 	cmd.Flags().Bool("random", false, "Choose a random current background")
-}
-
-func (r Runtime) installCommands() error {
-	userBin, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	userBin = filepath.Join(userBin, ".local", "bin")
-	if err := os.MkdirAll(userBin, 0o755); err != nil {
-		return err
-	}
-	executable, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	executable, err = filepath.EvalSymlinks(executable)
-	if err != nil {
-		return err
-	}
-	for _, name := range []string{"peace", "peace-listen", "peace-pause", "peace-stop", "peace-status"} {
-		link := filepath.Join(userBin, name)
-		if existing, readErr := os.Readlink(link); readErr == nil {
-			if existing == executable {
-				continue
-			}
-			return fmt.Errorf("peace install: refusing to replace existing command %s", link)
-		} else if !errors.Is(readErr, os.ErrNotExist) {
-			return readErr
-		}
-		if _, statErr := os.Lstat(link); statErr == nil {
-			return fmt.Errorf("peace install: refusing to replace existing command %s", link)
-		} else if !errors.Is(statErr, os.ErrNotExist) {
-			return statErr
-		}
-		if err := os.Symlink(executable, link); err != nil {
-			return err
-		}
-	}
-	fmt.Printf("Installed peace commands in %s\n", userBin)
-	return nil
 }
 
 func loadConfig(argv0 string) (Config, error) {

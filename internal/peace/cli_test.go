@@ -17,7 +17,7 @@ func TestRootHelpListsCommands(t *testing.T) {
 		if err := executeRoot(cmd); err != nil {
 			t.Fatalf("execute root help with args %v: %v", args, err)
 		}
-		for _, command := range []string{"listen", "pause", "stop", "status", "wallpaper", "random", "next", "prev", "install"} {
+		for _, command := range []string{"listen", "pause", "stop", "status", "wallpaper", "random", "next", "prev"} {
 			if !strings.Contains(stdout.String(), command) {
 				t.Errorf("root help missing %q:\n%s", command, stdout.String())
 			}

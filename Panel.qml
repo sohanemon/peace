@@ -224,20 +224,6 @@ Panel {
   }
 
   Process {
-    id: installProcess
-    command: [root.peaceExecutable, "install"]
-    stderr: StdioCollector {
-      onStreamFinished: {
-        var message = String(text).trim()
-        if (message !== "") root.requestError = message
-      }
-    }
-    onExited: function(exitCode) {
-      if (exitCode !== 0 && root.requestError === "") root.requestError = "Could not register the peace command"
-    }
-  }
-
-  Process {
     id: statusProcess
     command: [root.peaceExecutable, "status"]
     stdout: StdioCollector {
@@ -260,7 +246,6 @@ Panel {
   }
 
   Component.onCompleted: {
-    installProcess.running = true
     root.refreshStatus()
   }
 }
