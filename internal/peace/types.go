@@ -2,7 +2,6 @@ package peace
 
 import (
 	"encoding/json"
-	"time"
 )
 
 type Config struct {
@@ -54,12 +53,6 @@ type SurahAudio struct {
 	} `json:"ayahs"`
 }
 
-type Preparation struct {
-	Ayah int
-	PID  int
-}
-
 type Runtime struct {
 	Config Config
-	Now    func() time.Time
 }

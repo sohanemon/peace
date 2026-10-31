@@ -133,19 +133,32 @@ func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, outpu
 }
 
 func fetchAyahText(surah, ayah int) (ayahText, error) {
-	var response struct {
-		Data []ayahEdition `json:"data"`
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	url := fmt.Sprintf("https://api.alquran.cloud/v1/ayah/%d:%d/editions/quran-uthmani,en.sahih", surah, ayah)
-	if err := getJSON(ctx, url, &response); err != nil {
+	data, err := fetchAyahEditions(ctx, url)
+	if err != nil {
 		return ayahText{}, err
 	}
-	if len(response.Data) != 2 {
-		return ayahText{}, fmt.Errorf("ayah text is incomplete")
+	return ayahText{
+		Arabic:    data[0].Text,
+		English:   data[1].Text,
+		Reference: fmt.Sprintf("%s %d:%d", data[0].Surah.EnglishName, surah, data[0].NumberInSurah),
+	}, nil
+}
+
+// fetchAyahEditions fetches and validates the two ayah editions (Arabic + English).
+func fetchAyahEditions(ctx context.Context, url string) ([]ayahEdition, error) {
+	var response struct {
+		Data []ayahEdition `json:"data"`
 	}
-	return ayahText{Arabic: response.Data[0].Text, English: response.Data[1].Text, Reference: fmt.Sprintf("%s %d:%d", response.Data[0].Surah.EnglishName, surah, response.Data[0].NumberInSurah)}, nil
+	if err := getJSON(ctx, url, &response); err != nil {
+		return nil, err
+	}
+	if len(response.Data) != 2 {
+		return nil, fmt.Errorf("ayah text is incomplete")
+	}
+	return response.Data, nil
 }
 
 func (r Runtime) currentColors() themeColors {

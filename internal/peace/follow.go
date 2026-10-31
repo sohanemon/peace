@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -168,18 +167,11 @@ func (r Runtime) prepareInitialWallpaper(surah, ayah int, baseImage string) erro
 func downloadFile(url, destination string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	response, err := (&http.Client{Timeout: 20 * time.Second}).Do(request)
+	response, err := openURL(ctx, url)
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %s", response.Status)
-	}
 	file, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
@@ -231,7 +223,7 @@ func (r Runtime) follow() error {
 			}
 		}
 	audioPrefetchComplete:
-		now := r.Now()
+		now := time.Now()
 		idle, _ := r.property("idle-active")
 		position, _ := r.property("playlist-pos")
 		count, _ := r.property("playlist-count")
@@ -415,7 +407,7 @@ func (r Runtime) displayWallpaper(cache string, surah, ayah int) bool {
 	if os.MkdirAll(backgroundDir, 0o700) != nil {
 		return false
 	}
-	background := filepath.Join(backgroundDir, fmt.Sprintf("follow-%d.png", r.Now().UnixNano()))
+	background := filepath.Join(backgroundDir, fmt.Sprintf("follow-%d.png", time.Now().UnixNano()))
 	data, err := os.ReadFile(image)
 	if err != nil {
 		return false
@@ -445,17 +437,7 @@ func (r Runtime) displayWallpaper(cache string, surah, ayah int) bool {
 }
 
 func (r Runtime) finishFollow() {
-	entries, _ := os.ReadDir(r.Config.StateDir)
-	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name(), "prep-") || !strings.HasSuffix(entry.Name(), ".pid") {
-			continue
-		}
-		path := filepath.Join(r.Config.StateDir, entry.Name())
-		if pid, err := readPID(path); err == nil {
-			_ = syscall.Kill(-pid, syscall.SIGTERM)
-		}
-		_ = os.Remove(path)
-	}
+	stopPrep(r.Config.StateDir)
 	_ = os.Remove(r.followingFile())
 	_ = os.Remove(r.supervisorFile())
 	_ = os.Remove(r.pidFile())
@@ -469,7 +451,7 @@ func (r Runtime) logEvent(message string) {
 		return
 	}
 	defer file.Close()
-	_, _ = fmt.Fprintf(file, "[%s] %s\n", r.Now().Format(time.RFC3339), message)
+	_, _ = fmt.Fprintf(file, "[%s] %s\n", time.Now().Format(time.RFC3339), message)
 }
 
 func titleAyah(title string, surah int) (int, bool) {

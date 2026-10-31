@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"io.github.sohanemon/omapeace/internal/peace"
+	"io.github.sohanemon/peace/internal/peace"
 )
 
 func main() {

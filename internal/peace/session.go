@@ -130,6 +130,20 @@ func (r Runtime) startWorker(action string) error {
 	return cmd.Process.Release()
 }
 
+// stopPrep kills and removes any pending wallpaper-preparation worker pid files.
+func stopPrep(stateDir string) {
+	_ = filepath.WalkDir(stateDir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || !strings.HasPrefix(entry.Name(), "prep-") || !strings.HasSuffix(entry.Name(), ".pid") {
+			return nil
+		}
+		if pid, readErr := readPID(path); readErr == nil {
+			_ = syscall.Kill(-pid, syscall.SIGTERM)
+		}
+		_ = os.Remove(path)
+		return nil
+	})
+}
+
 func (r Runtime) pause() error {
 	if !r.mpvAlive() {
 		return errors.New("not playing")
@@ -188,15 +202,7 @@ func (r Runtime) stop() error {
 		_ = os.Remove(path)
 	}
 	_ = os.Remove(r.Config.Socket)
-	_ = filepath.WalkDir(r.Config.StateDir, func(path string, entry os.DirEntry, err error) error {
-		if err == nil && strings.HasPrefix(entry.Name(), "prep-") && strings.HasSuffix(entry.Name(), ".pid") {
-			if pid, readErr := readPID(path); readErr == nil {
-				_ = syscall.Kill(-pid, syscall.SIGTERM)
-			}
-			_ = os.Remove(path)
-		}
-		return nil
-	})
+	stopPrep(r.Config.StateDir)
 	return os.RemoveAll(filepath.Join(r.Config.CacheDir, "follow"))
 }
 

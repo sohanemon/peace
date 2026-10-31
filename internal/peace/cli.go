@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 )
 
 func Run(argv0 string, args []string) error {
@@ -18,7 +17,7 @@ func Run(argv0 string, args []string) error {
 	if err != nil {
 		return err
 	}
-	runtime := Runtime{Config: cfg, Now: time.Now}
+	runtime := Runtime{Config: cfg}
 	name := filepath.Base(argv0)
 	if name != "peace" {
 		return runtime.runAlias(name, args)

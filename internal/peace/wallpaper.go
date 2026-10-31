@@ -34,7 +34,7 @@ func (r Runtime) wallpaper(action string) error {
 	if err := os.MkdirAll(outputDir, 0o700); err != nil {
 		return err
 	}
-	output := filepath.Join(outputDir, fmt.Sprintf("ayah-%d-%d.png", r.Now().UnixNano(), absoluteAyah))
+	output := filepath.Join(outputDir, fmt.Sprintf("ayah-%d-%d.png", time.Now().UnixNano(), absoluteAyah))
 	if err := r.renderAyahText(surah, ayah, text, base, output); err != nil {
 		return err
 	}
@@ -75,21 +75,20 @@ func (r Runtime) chooseWallpaperAyah(action string) (int, error) {
 }
 
 func fetchAyahByAbsolute(number int) (int, int, ayahText, error) {
-	var response struct {
-		Data []ayahEdition `json:"data"`
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	url := fmt.Sprintf("https://api.alquran.cloud/v1/ayah/%d/editions/quran-uthmani,en.sahih", number)
-	if err := getJSON(ctx, url, &response); err != nil {
+	data, err := fetchAyahEditions(ctx, url)
+	if err != nil {
 		return 0, 0, ayahText{}, err
 	}
-	if len(response.Data) != 2 {
-		return 0, 0, ayahText{}, errors.New("peace wallpaper: ayah text is incomplete")
+	surah := data[0].Surah.Number
+	ayah := data[0].NumberInSurah
+	text := ayahText{
+		Arabic:    data[0].Text,
+		English:   data[1].Text,
+		Reference: fmt.Sprintf("%s %d:%d", data[0].Surah.EnglishName, surah, ayah),
 	}
-	surah := response.Data[0].Surah.Number
-	ayah := response.Data[0].NumberInSurah
-	text := ayahText{Arabic: response.Data[0].Text, English: response.Data[1].Text, Reference: fmt.Sprintf("%s %d:%d", response.Data[0].Surah.EnglishName, surah, ayah)}
 	return surah, ayah, text, nil
 }
 

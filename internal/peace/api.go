@@ -146,7 +146,7 @@ func parseReference(ref string) (int, int, int, error) {
 func (r Runtime) surahCounts(ctx context.Context) (map[int]int, error) {
 	path := filepath.Join(r.Config.CacheDir, "surahs.json")
 	var cached []Surah
-	if info, err := os.Stat(path); err == nil && r.Now().Sub(info.ModTime()) < 30*24*time.Hour {
+	if info, err := os.Stat(path); err == nil && time.Now().Sub(info.ModTime()) < 30*24*time.Hour {
 		if data, readErr := os.ReadFile(path); readErr == nil && json.Unmarshal(data, &cached) == nil {
 			return countMap(cached), nil
 		}
@@ -201,19 +201,31 @@ func (r Runtime) audioURLs(ctx context.Context, surah, start, end int, reciter s
 	return urls, nil
 }
 
-func getJSON(ctx context.Context, url string, target any) error {
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
+// openURL performs a GET with context cancellation and a 2xx status check.
+func openURL(ctx context.Context, url string) (*http.Response, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	response, err := (&http.Client{Timeout: 28 * time.Second}).Do(request)
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		response.Body.Close()
+		return nil, fmt.Errorf("HTTP %s", response.Status)
+	}
+	return response, nil
+}
+
+func getJSON(ctx context.Context, url string, target any) error {
+	response, err := openURL(ctx, url)
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("HTTP %s", response.Status)
-	}
 	return json.NewDecoder(io.LimitReader(response.Body, 16<<20)).Decode(target)
 }
 
