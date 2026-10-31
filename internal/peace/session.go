@@ -23,14 +23,21 @@ func (r Runtime) startMPV(args []string) error {
 		return err
 	}
 	_ = os.Remove(r.Config.Socket)
-	cmd := exec.Command("mpv", args...)
+	logPath := filepath.Join(r.Config.StateDir, "mpv.log")
+	cmdArgs := append(append([]string(nil), args...), "--log-file="+logPath, "--msg-level=all=warn")
+	cmd := exec.Command("mpv", cmdArgs...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	devnull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+	devnull, err := os.OpenFile(os.DevNull, os.O_RDONLY, 0)
 	if err != nil {
 		return err
 	}
 	defer devnull.Close()
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = devnull, devnull, devnull
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = devnull, logFile, logFile
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("peace listen: start mpv: %w", err)
 	}
@@ -40,6 +47,57 @@ func (r Runtime) startMPV(args []string) error {
 	}
 	if err := cmd.Process.Release(); err != nil {
 		return err
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if !r.pidAlive(r.pidFile()) {
+			data, _ := os.ReadFile(filepath.Join(r.Config.StateDir, "mpv.log"))
+			detail := strings.TrimSpace(string(data))
+			if detail == "" {
+				detail = "mpv stopped before becoming ready; inspect ~/.local/state/peace/mpv.log"
+			}
+			return fmt.Errorf("peace listen: mpv exited during startup: %s", detail)
+		}
+		if !containsArgument(args, "--idle=yes") && r.mpvAlive() {
+			return nil
+		}
+		if r.mpvAlive() {
+			if _, err := r.property("idle-active"); err == nil {
+				return nil
+			}
+		}
+		if _, err := os.Stat(r.Config.Socket); err == nil {
+			if !r.mpvAlive() {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	data, _ := os.ReadFile(filepath.Join(r.Config.StateDir, "mpv.log"))
+	detail := strings.TrimSpace(string(data))
+	if detail == "" {
+		detail = "IPC socket did not become ready; inspect ~/.local/state/peace/mpv.log"
+	}
+	return fmt.Errorf("peace listen: mpv did not become ready: %s", detail)
+}
+
+func containsArgument(args []string, expected string) bool {
+	for _, arg := range args {
+		if arg == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func (r Runtime) appendAudio(source, title string) error {
+	response, err := r.sendIPC(map[string]any{"command": []any{"loadfile", source, "append-play", -1, map[string]string{"force-media-title": title}}})
+	if err != nil {
+		return err
+	}
+	if response["error"] != "success" {
+		return fmt.Errorf("mpv rejected audio: %v", response["error"])
 	}
 	return nil
 }

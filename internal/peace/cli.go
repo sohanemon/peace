@@ -1,8 +1,10 @@
+// NOTE: Keep command routing here and place playback, rendering, and API work in focused modules.
 package peace
 
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,13 +46,20 @@ func Run(argv0 string, args []string) error {
 	case "status":
 		return runtime.status()
 	case "install":
-		return installCommands()
+		return runtime.installCommands()
 	case "__follow":
 		return runtime.follow()
 	case "__prepare":
 		return runtime.prepare(rest)
 	case "wallpaper", "random", "next", "prev":
-		return runtime.runThemeCommand("peace-wallpaper", action, rest...)
+		wallpaperAction := action
+		if action == "wallpaper" && len(rest) > 0 {
+			wallpaperAction, rest = rest[0], rest[1:]
+		}
+		if len(rest) != 0 {
+			return fmt.Errorf("peace wallpaper: unexpected argument %q", rest[0])
+		}
+		return runtime.wallpaper(wallpaperAction)
 	case "init", "uninstall", "enable", "disable", "logs":
 		return runCommand(filepath.Join(runtime.Config.Home, ".local", "bin", "peace-"+action), rest...)
 	default:
@@ -95,7 +104,7 @@ func (r Runtime) runAlias(name string, args []string) error {
 	}
 }
 
-func installCommands() error {
+func (r Runtime) installCommands() error {
 	userBin, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -124,6 +133,34 @@ func installCommands() error {
 			return err
 		}
 	}
+	fontSource := filepath.Join(r.Config.PluginDir, "assets", "fonts", "Amiri-Regular.ttf")
+	if input, openErr := os.Open(fontSource); openErr == nil {
+		fontDir := filepath.Join(userBin, "..", "share", "fonts", "omapeace")
+		if err := os.MkdirAll(fontDir, 0o755); err != nil {
+			_ = input.Close()
+			return err
+		}
+		fontTarget := filepath.Join(fontDir, "Amiri-Regular.ttf")
+		output, createErr := os.OpenFile(fontTarget, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+		if createErr != nil {
+			_ = input.Close()
+			return createErr
+		}
+		_, copyErr := io.Copy(output, input)
+		closeOutputErr, closeInputErr := output.Close(), input.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if closeOutputErr != nil {
+			return closeOutputErr
+		}
+		if closeInputErr != nil {
+			return closeInputErr
+		}
+		if fcCache, lookErr := exec.LookPath("fc-cache"); lookErr == nil {
+			_ = exec.Command(fcCache, "-f", fontDir).Run()
+		}
+	}
 	fmt.Printf("Installed peace commands in %s\n", userBin)
 	return nil
 }
@@ -150,19 +187,7 @@ func loadConfig(argv0 string) (Config, error) {
 	if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
 		socket = filepath.Join(runtimeDir, "peace-mpv.sock")
 	}
-	theme := os.Getenv("PEACE_THEME_DIR")
-	if theme == "" {
-		theme = filepath.Join(home, ".config", "omarchy", "themes", "peace")
-	}
-	return Config{Home: home, PluginDir: pluginDir, ThemeDir: theme, StateDir: state, CacheDir: cache, Socket: socket}, nil
-}
-
-func (r Runtime) runThemeCommand(name, action string, args ...string) error {
-	path := filepath.Join(r.Config.Home, ".local", "bin", name)
-	if action == "wallpaper" {
-		return runCommand(path, args...)
-	}
-	return runCommand(path, append([]string{action}, args...)...)
+	return Config{Home: home, PluginDir: pluginDir, StateDir: state, CacheDir: cache, Socket: socket}, nil
 }
 
 func runCommand(path string, args ...string) error {
@@ -239,6 +264,7 @@ func parseOptions(args []string) (Options, error) {
 	}
 	return o, nil
 }
+
 func safeID(s string) bool {
 	if s == "" {
 		return false

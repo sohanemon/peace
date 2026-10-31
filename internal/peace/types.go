@@ -8,7 +8,6 @@ import (
 type Config struct {
 	Home      string
 	PluginDir string
-	ThemeDir  string
 	StateDir  string
 	CacheDir  string
 	Socket    string
@@ -29,6 +28,7 @@ type PlayState struct {
 	End       int      `json:"end"`
 	Reciter   string   `json:"reciter"`
 	Follow    bool     `json:"follow"`
+	BaseImage string   `json:"base_image,omitempty"`
 	AudioURLs []string `json:"audio_urls,omitempty"`
 	Buffer    int      `json:"buffer,omitempty"`
 	Lead      int      `json:"lead,omitempty"`

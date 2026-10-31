@@ -55,14 +55,14 @@ func (r Runtime) listen(args []string) error {
 	if _, err := exec.LookPath("mpv"); err != nil {
 		return errors.New("peace listen: mpv is required")
 	}
+	baseImage := ""
 	if o.Follow {
-		activeTheme, _ := os.ReadFile(filepath.Join(r.Config.Home, ".local", "state", "omarchy", "current", "theme.name"))
-		if string(activeTheme) != "peace" {
-			fmt.Fprintf(os.Stderr, "peace listen: warning: active theme is %q; playing audio without wallpaper follow\n", string(activeTheme))
-			o.Follow = false
+		baseImage, err = r.snapshotBackground()
+		if err != nil {
+			return fmt.Errorf("peace listen: snapshot current wallpaper: %w", err)
 		}
 	}
-	state := PlayState{Surah: surah, Start: start, End: end, Reciter: o.Reciter, Follow: o.Follow, Preparing: o.Follow}
+	state := PlayState{Surah: surah, Start: start, End: end, Reciter: o.Reciter, Follow: o.Follow, BaseImage: baseImage, Preparing: o.Follow}
 	if o.Follow {
 		state.AudioURLs, state.Buffer, state.Lead, state.Jobs = urls, o.Buffer, o.Lead, o.Jobs
 	}
@@ -70,21 +70,33 @@ func (r Runtime) listen(args []string) error {
 		return err
 	}
 	if o.Follow {
-		if err := r.startMPV([]string{"--idle=yes", "--no-video", "--no-terminal", "--really-quiet", "--gapless-audio=yes", "--prefetch-playlist=yes", "--input-ipc-server=" + r.Config.Socket}); err != nil {
+		if err := r.startMPV([]string{"--idle=yes", "--no-video", "--no-terminal", "--gapless-audio=yes", "--prefetch-playlist=yes", "--input-ipc-server=" + r.Config.Socket}); err != nil {
+			_ = r.stop()
+			return err
+		}
+		if err := r.appendAudio(urls[0], fmt.Sprintf("%d:%d", surah, start)); err != nil {
+			_ = r.stop()
+			return fmt.Errorf("peace listen: start first ayah: %w", err)
+		}
+		state.Appended, state.Preparing = 1, false
+		if err := r.writeState(state); err != nil {
+			_ = r.stop()
 			return err
 		}
 	} else {
-		args := []string{"--no-video", "--no-terminal", "--really-quiet", "--gapless-audio=yes", "--prefetch-playlist=yes", "--input-ipc-server=" + r.Config.Socket}
+		args := []string{"--no-video", "--no-terminal", "--gapless-audio=yes", "--prefetch-playlist=yes", "--input-ipc-server=" + r.Config.Socket}
 		args = append(args, urls...)
 		if err := r.startMPV(args); err != nil {
+			_ = r.stop()
 			return err
 		}
 	}
 	if o.Follow {
 		if err := r.startWorker("__follow"); err != nil {
+			_ = r.stop()
 			return err
 		}
-		fmt.Println("Preparing, playback starts in a few seconds")
+		fmt.Println("Playback started; buffering upcoming ayahs and wallpapers")
 	}
 	return nil
 }

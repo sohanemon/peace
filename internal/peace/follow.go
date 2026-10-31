@@ -15,8 +15,94 @@ import (
 	"time"
 )
 
+func (r Runtime) snapshotBackground() (string, error) {
+	current := filepath.Join(r.Config.Home, ".local", "state", "omarchy", "current", "background")
+	source, err := filepath.EvalSymlinks(current)
+	if err != nil {
+		source = r.fallbackBackground()
+	}
+	outputDir := filepath.Join(r.Config.Home, ".local", "share", "omapeace", "backgrounds")
+	if relative, relErr := filepath.Rel(outputDir, source); relErr == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+		basePath, readErr := os.ReadFile(source + ".base")
+		if readErr != nil {
+			source = r.fallbackBackground()
+		} else if source, err = filepath.EvalSymlinks(strings.TrimSpace(string(basePath))); err != nil {
+			source = r.fallbackBackground()
+		}
+	}
+	info, err := os.Stat(source)
+	if err != nil || !info.Mode().IsRegular() || !supportedBackground(source) {
+		source = r.fallbackBackground()
+		info, err = os.Stat(source)
+		if err != nil || !info.Mode().IsRegular() {
+			return "", nil
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(r.Config.CacheDir, "follow"), 0o700); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(r.Config.CacheDir, "follow", "base-source"), []byte(source+"\n"), 0o600); err != nil {
+		return "", err
+	}
+	ext := strings.ToLower(filepath.Ext(source))
+	if len(ext) > 8 || ext == "" {
+		ext = ".img"
+	}
+	destination := filepath.Join(r.Config.CacheDir, "follow", "base"+ext)
+	input, err := os.Open(source)
+	if err != nil {
+		return "", err
+	}
+	defer input.Close()
+	output, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", err
+	}
+	_, copyErr := io.Copy(output, input)
+	closeErr := output.Close()
+	if copyErr != nil {
+		_ = os.Remove(destination)
+		return "", copyErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(destination)
+		return "", closeErr
+	}
+	return destination, nil
+}
+
+func (r Runtime) fallbackBackground() string {
+	for _, directory := range r.backgroundDirectories() {
+		paths, _ := filepath.Glob(filepath.Join(directory, "*"))
+		for _, path := range paths {
+			if supportedBackground(path) {
+				if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+					return path
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func (r Runtime) backgroundDirectories() []string {
+	return []string{
+		filepath.Join(r.Config.PluginDir, "assets", "backgrounds"),
+		filepath.Join(r.Config.Home, "Code", "peace", "backgrounds"),
+	}
+}
+
+func supportedBackground(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp":
+		return true
+	default:
+		return false
+	}
+}
+
 func (r Runtime) prepare(args []string) error {
-	if len(args) != 3 {
+	if len(args) != 2 {
 		return errors.New("peace: invalid preparation request")
 	}
 	surah, err := strconv.Atoi(args[0])
@@ -28,42 +114,33 @@ func (r Runtime) prepare(args []string) error {
 		return err
 	}
 	ref := fmt.Sprintf("%d:%d", surah, ayah)
+	state, err := r.readState()
+	if err != nil {
+		return err
+	}
 	cache := filepath.Join(r.Config.CacheDir, "follow")
 	if err := os.MkdirAll(cache, 0o700); err != nil {
 		return err
 	}
 	image := filepath.Join(cache, fmt.Sprintf("%d-%d.png", surah, ayah))
-	audio := filepath.Join(cache, fmt.Sprintf("%d-%d.mp3", surah, ayah))
-	var downloadErr, renderErr error
-	done := make(chan struct{})
-	go func() { downloadErr = downloadFile(args[2], audio+".tmp"); close(done) }()
-	for attempt := 1; attempt <= 2; attempt++ {
-		cmd := exec.Command(filepath.Join(r.Config.ThemeDir, "bin", "peace-wallpaper"), "--ref", ref, "--out", image+".tmp")
-		if output, err := cmd.CombinedOutput(); err == nil {
-			renderErr = os.Rename(image+".tmp", image)
-			if renderErr == nil {
-				break
+	var renderErr error
+	if fileExists(image) || fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.skip", surah, ayah))) {
+		renderErr = nil
+	} else {
+		for attempt := 1; attempt <= 2; attempt++ {
+			tempImage := image + ".tmp.png"
+			if renderErr = r.renderAyah(surah, ayah, state.BaseImage, tempImage); renderErr == nil {
+				renderErr = os.Rename(tempImage, image)
+				if renderErr == nil {
+					break
+				}
 			}
-		} else {
-			renderErr = fmt.Errorf("%s: %w", strings.TrimSpace(string(output)), err)
+			_ = os.Remove(tempImage)
 		}
-		_ = os.Remove(image + ".tmp")
-	}
-	<-done
-	if downloadErr == nil {
-		if err := os.Rename(audio+".tmp", audio); err != nil {
-			downloadErr = err
-		}
-	}
-	if downloadErr != nil {
-		_ = os.Remove(audio + ".tmp")
-		_ = os.WriteFile(filepath.Join(cache, fmt.Sprintf("%d-%d.audio-fail", surah, ayah)), nil, 0o600)
 	}
 	if renderErr != nil {
 		_ = os.WriteFile(filepath.Join(cache, fmt.Sprintf("%d-%d.skip", surah, ayah)), nil, 0o600)
-	}
-	if downloadErr != nil && renderErr != nil {
-		return fmt.Errorf("peace: preparation failed for %s", ref)
+		r.logEvent(fmt.Sprintf("wallpaper render skipped %s: %v", ref, renderErr))
 	}
 	return nil
 }
@@ -114,17 +191,25 @@ func (r Runtime) follow() error {
 	defer r.finishFollow()
 	cache := filepath.Join(r.Config.CacheDir, "follow")
 	total := state.End - state.Start + 1
-	prepCount := min(state.Lead, total, state.Buffer+2)
-	prepEnd := state.Start + prepCount - 1
 	prep := map[int]int{}
-	appendIndex, current := 0, 0
-	warmup, started := true, r.Now()
+	audioJobs := map[int]bool{}
+	audioDone := make(chan int, 32)
+	appendIndex, current := state.Appended, state.Start
 	lastTitle, waitRef := "", ""
 	waitStarted := time.Time{}
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 	for r.mpvAlive() {
 		<-ticker.C
+		for {
+			select {
+			case ayah := <-audioDone:
+				delete(audioJobs, ayah)
+			default:
+				goto audioPrefetchComplete
+			}
+		}
+	audioPrefetchComplete:
 		now := r.Now()
 		idle, _ := r.property("idle-active")
 		position, _ := r.property("playlist-pos")
@@ -151,63 +236,27 @@ func (r Runtime) follow() error {
 				r.displayWallpaper(cache, state.Surah, current)
 			}
 		}
-		if warmup {
-			wallpapers, audioReady := 0, false
-			for ayah := state.Start; ayah <= prepEnd; ayah++ {
-				if fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.png", state.Surah, ayah))) || fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.skip", state.Surah, ayah))) {
-					wallpapers++
-				}
-				if ayah == state.Start && (fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.mp3", state.Surah, ayah))) || fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.audio-fail", state.Surah, ayah)))) {
-					audioReady = true
-				}
-			}
-			state.Ready, state.Preparing = wallpapers, true
-			_ = r.writeState(state)
-			if wallpapers >= prepCount && audioReady {
-				warmup = false
-				state.Preparing = false
-				_ = r.writeState(state)
-				fmt.Println()
-			}
-			if now.Sub(started) > 45*time.Second {
-				for ayah := state.Start; ayah <= prepEnd; ayah++ {
-					if !fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.png", state.Surah, ayah))) {
-						_ = os.WriteFile(filepath.Join(cache, fmt.Sprintf("%d-%d.skip", state.Surah, ayah)), nil, 0o600)
-					}
-					if !fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.mp3", state.Surah, ayah))) {
-						_ = os.WriteFile(filepath.Join(cache, fmt.Sprintf("%d-%d.audio-fail", state.Surah, ayah)), nil, 0o600)
-					}
-					if pid := prep[ayah]; pid > 0 {
-						_ = syscall.Kill(-pid, syscall.SIGTERM)
-						delete(prep, ayah)
-					}
-				}
-				warmup = false
-				state.Preparing = false
-				_ = r.writeState(state)
-			}
-		}
 		appendLimit := max(0, current-state.Start+1) + state.Buffer
 		if appendLimit > total {
 			appendLimit = total
 		}
-		if !warmup && appendIndex < appendLimit {
+		if appendIndex < appendLimit {
 			ayah := state.Start + appendIndex
-			png := filepath.Join(cache, fmt.Sprintf("%d-%d.png", state.Surah, ayah))
 			mp3 := filepath.Join(cache, fmt.Sprintf("%d-%d.mp3", state.Surah, ayah))
-			imageResolved := fileExists(png) || fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.skip", state.Surah, ayah)))
 			audioResolved := fileExists(mp3) || fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.audio-fail", state.Surah, ayah)))
-			if imageResolved && audioResolved {
+			if audioResolved || (!waitStarted.IsZero() && now.Sub(waitStarted) >= 2*time.Second) {
 				audioSource := mp3
 				if !fileExists(mp3) && appendIndex < len(state.AudioURLs) {
 					audioSource = state.AudioURLs[appendIndex]
 				}
-				response, sendErr := r.sendIPC(map[string]any{"command": []any{"loadfile", audioSource, "append-play", map[string]string{"force-media-title": fmt.Sprintf("%d:%d", state.Surah, ayah)}}, "request_id": 1})
-				if sendErr == nil && response["error"] == "success" {
+				if err := r.appendAudio(audioSource, fmt.Sprintf("%d:%d", state.Surah, ayah)); err == nil {
 					appendIndex++
 					state.Appended = appendIndex
 					_ = r.writeState(state)
 					waitRef = ""
+					r.logEvent(fmt.Sprintf("audio appended %d:%d (%s)", state.Surah, ayah, audioSource))
+				} else {
+					r.logEvent(fmt.Sprintf("audio append failed %d:%d: %v", state.Surah, ayah, err))
 				}
 			} else {
 				key := state.Surah*1000 + ayah
@@ -215,28 +264,14 @@ func (r Runtime) follow() error {
 					waitRef = fmt.Sprint(key)
 					waitStarted = now
 				}
-				if now.Sub(waitStarted) >= 45*time.Second {
-					if !imageResolved {
-						_ = os.WriteFile(filepath.Join(cache, fmt.Sprintf("%d-%d.skip", state.Surah, ayah)), nil, 0o600)
-					}
-					if !audioResolved {
-						_ = os.WriteFile(filepath.Join(cache, fmt.Sprintf("%d-%d.audio-fail", state.Surah, ayah)), nil, 0o600)
-					}
-					if pid := prep[ayah]; pid > 0 {
-						_ = syscall.Kill(-pid, syscall.SIGTERM)
-						delete(prep, ayah)
-					}
-				}
 			}
 		}
-		base, window := state.Start+appendIndex, state.Buffer
-		if warmup {
-			base, window = state.Start, prepCount
-		} else if current > 0 {
+		base, window := state.Start+appendIndex, max(state.Buffer, state.Lead)
+		if current > 0 {
 			base = current + 1
 		}
-		if pausedValue, ok := paused.(bool); ok && pausedValue && current == 0 && !warmup {
-			window = max(0, state.Buffer-appendIndex)
+		if pausedValue, ok := paused.(bool); ok && pausedValue && current == state.Start {
+			window = max(0, max(state.Buffer, state.Lead)-appendIndex)
 		}
 		end := min(state.End, base+window-1)
 		active := 0
@@ -248,31 +283,28 @@ func (r Runtime) follow() error {
 				_ = os.Remove(filepath.Join(r.Config.StateDir, fmt.Sprintf("prep-%d.pid", ayah)))
 			}
 		}
-		limit := 1
-		if warmup {
-			limit = state.Jobs
-		} else {
-			ready := 0
-			for ayah := base; ayah <= end; ayah++ {
-				if fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.png", state.Surah, ayah))) && fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.mp3", state.Surah, ayah))) {
-					ready++
-				}
-			}
-			if ready < 3 {
-				limit = state.Jobs
-			}
-		}
-		for ayah := base; ayah <= end && active < limit; ayah++ {
-			if _, exists := prep[ayah]; exists {
-				continue
-			}
-			if fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.png", state.Surah, ayah))) && fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.mp3", state.Surah, ayah))) {
+		limit := state.Jobs
+		activeAudio := len(audioJobs)
+		for ayah := base; ayah <= end && activeAudio < state.Jobs; ayah++ {
+			if fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.mp3", state.Surah, ayah))) || fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.audio-fail", state.Surah, ayah))) || audioJobs[ayah] {
 				continue
 			}
 			if ayah-state.Start >= len(state.AudioURLs) {
 				continue
 			}
-			pid, startErr := r.startPrepare(state.Surah, ayah, state.AudioURLs[ayah-state.Start])
+			audioJobs[ayah] = true
+			activeAudio++
+			go r.prefetchAudio(state.Surah, ayah, state.AudioURLs[ayah-state.Start], audioDone)
+		}
+		for ayah := base; ayah <= end && active < limit; ayah++ {
+			if _, exists := prep[ayah]; exists {
+				continue
+			}
+			imageDone := fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.png", state.Surah, ayah))) || fileExists(filepath.Join(cache, fmt.Sprintf("%d-%d.skip", state.Surah, ayah)))
+			if imageDone {
+				continue
+			}
+			pid, startErr := r.startPrepare(state.Surah, ayah)
 			if startErr == nil {
 				prep[ayah] = pid
 				active++
@@ -286,12 +318,33 @@ func (r Runtime) follow() error {
 	return nil
 }
 
-func (r Runtime) startPrepare(surah, ayah int, url string) (int, error) {
+func (r Runtime) prefetchAudio(surah, ayah int, url string, done chan<- int) {
+	defer func() { done <- ayah }()
+	cache := filepath.Join(r.Config.CacheDir, "follow")
+	audio := filepath.Join(cache, fmt.Sprintf("%d-%d.mp3", surah, ayah))
+	marker := filepath.Join(cache, fmt.Sprintf("%d-%d.audio-fail", surah, ayah))
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		err = downloadFile(url, audio+".tmp")
+		if err == nil {
+			err = os.Rename(audio+".tmp", audio)
+		}
+		if err == nil {
+			r.logEvent(fmt.Sprintf("audio cached %d:%d", surah, ayah))
+			return
+		}
+		_ = os.Remove(audio + ".tmp")
+	}
+	_ = os.WriteFile(marker, nil, 0o600)
+	r.logEvent(fmt.Sprintf("audio cache unavailable %d:%d: %v; playback will stream", surah, ayah, err))
+}
+
+func (r Runtime) startPrepare(surah, ayah int) (int, error) {
 	executable, err := os.Executable()
 	if err != nil {
 		return 0, err
 	}
-	cmd := exec.Command(executable, "__prepare", strconv.Itoa(surah), strconv.Itoa(ayah), url)
+	cmd := exec.Command(executable, "__prepare", strconv.Itoa(surah), strconv.Itoa(ayah))
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	logFile, err := os.OpenFile(filepath.Join(r.Config.StateDir, "follow.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -318,17 +371,20 @@ func (r Runtime) displayWallpaper(cache string, surah, ayah int) {
 	if !fileExists(image) {
 		return
 	}
-	backgroundDir := filepath.Join(r.Config.Home, ".config", "omarchy", "backgrounds", "peace")
+	backgroundDir := filepath.Join(r.Config.Home, ".local", "share", "omapeace", "backgrounds")
 	if os.MkdirAll(backgroundDir, 0o700) != nil {
 		return
 	}
-	background := filepath.Join(backgroundDir, fmt.Sprintf("follow-%d.png", r.Now().UnixMilli()))
+	background := filepath.Join(backgroundDir, fmt.Sprintf("follow-%d.png", r.Now().UnixNano()))
 	data, err := os.ReadFile(image)
 	if err != nil {
 		return
 	}
 	if os.WriteFile(background, data, 0o600) != nil {
 		return
+	}
+	if baseSource, readErr := os.ReadFile(filepath.Join(cache, "base-source")); readErr == nil {
+		_ = os.WriteFile(background+".base", baseSource, 0o600)
 	}
 	cmd := exec.Command("omarchy", "theme", "bg", "set", background)
 	if cmd.Run() != nil {
@@ -342,6 +398,7 @@ func (r Runtime) displayWallpaper(cache string, surah, ayah int) {
 	if len(entries) > 2 {
 		for _, path := range entries[:len(entries)-2] {
 			_ = os.Remove(path)
+			_ = os.Remove(path + ".base")
 		}
 	}
 }
