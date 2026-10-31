@@ -10,7 +10,7 @@ Copy the plugin into Omarchy's plugin directory, validate it, and install the pe
     cp -a "$HOME/Code/omapeace/." ~/.config/omarchy/plugins/io.github.sohanemon.omapeace/
     omarchy plugin validate ~/.config/omarchy/plugins/io.github.sohanemon.omapeace
     qmllint -I "$OMARCHY_PATH/shell" ~/.config/omarchy/plugins/io.github.sohanemon.omapeace/BarWidget.qml ~/.config/omarchy/plugins/io.github.sohanemon.omapeace/Panel.qml
-    ~/.config/omarchy/plugins/io.github.sohanemon.omapeace/install.sh
+    ~/.config/omarchy/plugins/io.github.sohanemon.omapeace/bin/peace install
     omarchy plugin enable io.github.sohanemon.omapeace
 
 For changes during development, run the checks against the source folder:
@@ -18,7 +18,9 @@ For changes during development, run the checks against the source folder:
     omarchy plugin validate "$HOME/Code/omapeace"
     qmllint -I "$OMARCHY_PATH/shell" "$HOME/Code/omapeace/BarWidget.qml" "$HOME/Code/omapeace/Panel.qml"
 
-The installer links files named peace and peace-* into ~/.local/bin. It does not install or replace the Peace theme.
+The Go command links the packaged Omapeace executable into ~/.local/bin. It does not install or replace the Peace theme.
+
+The repository ships a statically linked Linux x86_64 Go command at `bin/peace`; users do not need Go, `curl`, `jq`, or `socat`. To rebuild it from source on Linux x86_64, run `CGO_ENABLED=0 go build -o bin/peace ./cmd/peace`. Audio playback uses `mpv`. Wallpaper follow also uses the Peace theme renderer and Omarchy's wallpaper command.
 
 ## Commands
 
@@ -29,7 +31,7 @@ The installer links files named peace and peace-* into ~/.local/bin. It does not
     peace status
     peace wallpaper next
 
-The follow option requires the Peace theme to be active and installed at ~/.config/omarchy/themes/peace, or set PEACE_THEME_DIR. Audio and wallpaper preparation use AlQuran Cloud. Listening requires mpv; pause, status, and follow require socat.
+The follow option requires the Peace theme to be active and installed at ~/.config/omarchy/themes/peace, or set PEACE_THEME_DIR. Audio and wallpaper preparation use AlQuran Cloud. Listening requires mpv.
 
 ## Remove
 
