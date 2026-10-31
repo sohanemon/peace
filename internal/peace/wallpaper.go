@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func (r Runtime) wallpaper(action string) error {
+func (r Runtime) wallpaper(action string, randomBackground bool) error {
 	if r.pidAlive(r.followingFile()) {
 		fmt.Println("peace: follow is active; skipping wallpaper change")
 		return nil
@@ -26,7 +26,7 @@ func (r Runtime) wallpaper(action string) error {
 	if err != nil {
 		return err
 	}
-	base, err := r.snapshotBackground()
+	base, err := r.snapshotBackground(randomBackground)
 	if err != nil {
 		return err
 	}

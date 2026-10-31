@@ -104,6 +104,13 @@ Panel {
           checked: false
         }
 
+        CheckBox {
+          id: randomBackgroundInput
+          text: "Random background"
+          visible: followInput.checked
+          checked: false
+        }
+
         Row {
           width: parent.width
           spacing: Style.space(8)
@@ -186,6 +193,7 @@ Panel {
               if (followInput.checked) {
                 args.push("--follow", "--buffer", String(bufferInput.value),
                   "--lead", String(leadInput.value), "--jobs", String(jobsInput.value))
+                if (randomBackgroundInput.checked) args.push("--random")
               }
               root.requestError = ""
               root.runPeace(args)

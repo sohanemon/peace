@@ -57,7 +57,7 @@ func (r Runtime) listen(args []string) error {
 	}
 	baseImage := ""
 	if o.Follow {
-		baseImage, err = r.snapshotBackground()
+		baseImage, err = r.snapshotBackground(o.Random)
 		if err != nil {
 			return fmt.Errorf("peace listen: snapshot current wallpaper: %w", err)
 		}

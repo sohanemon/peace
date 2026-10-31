@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,26 +15,45 @@ import (
 	"time"
 )
 
-func (r Runtime) snapshotBackground() (string, error) {
+func (r Runtime) snapshotBackground(random bool) (string, error) {
 	current := filepath.Join(r.Config.Home, ".local", "state", "omarchy", "current", "background")
-	source, err := filepath.EvalSymlinks(current)
-	if err != nil {
-		source = r.fallbackBackground()
+	source := ""
+	if random {
+		source = r.fallbackBackground(true)
+	}
+	if source == "" {
+		var err error
+		source, err = filepath.EvalSymlinks(current)
+		if err != nil {
+			source = r.fallbackBackground(false)
+		}
 	}
 	outputDir := filepath.Join(r.Config.Home, ".local", "share", "omapeace", "backgrounds")
-	if relative, relErr := filepath.Rel(outputDir, source); relErr == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+	if source != "" {
+		if relative, relErr := filepath.Rel(outputDir, source); relErr == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+			basePath, readErr := os.ReadFile(source + ".base")
+			if readErr != nil {
+				source = r.fallbackBackground(false)
+			} else if resolved, resolveErr := filepath.EvalSymlinks(strings.TrimSpace(string(basePath))); resolveErr != nil {
+				source = r.fallbackBackground(false)
+			} else {
+				source = resolved
+			}
+		}
+	}
+	if isTemporaryBackground(source) {
 		basePath, readErr := os.ReadFile(source + ".base")
-		if readErr != nil {
-			source = r.fallbackBackground()
-		} else if source, err = filepath.EvalSymlinks(strings.TrimSpace(string(basePath))); err != nil {
-			source = r.fallbackBackground()
+		if readErr == nil {
+			if resolved, resolveErr := filepath.EvalSymlinks(strings.TrimSpace(string(basePath))); resolveErr == nil {
+				source = resolved
+			}
 		}
 	}
 	info, err := os.Stat(source)
-	if err != nil || !info.Mode().IsRegular() || !supportedBackground(source) {
-		source = r.fallbackBackground()
+	if err != nil || !info.Mode().IsRegular() || !supportedBackground(source) || isTemporaryBackground(source) {
+		source = r.fallbackBackground(false)
 		info, err = os.Stat(source)
-		if err != nil || !info.Mode().IsRegular() {
+		if err != nil || !info.Mode().IsRegular() || isTemporaryBackground(source) {
 			return "", nil
 		}
 	}
@@ -72,25 +92,48 @@ func (r Runtime) snapshotBackground() (string, error) {
 	return destination, nil
 }
 
-func (r Runtime) fallbackBackground() string {
+func (r Runtime) fallbackBackground(random bool) string {
+	var candidates []string
+	seen := make(map[string]bool)
 	for _, directory := range r.backgroundDirectories() {
 		paths, _ := filepath.Glob(filepath.Join(directory, "*"))
 		for _, path := range paths {
-			if supportedBackground(path) {
-				if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
-					return path
-				}
+			if seen[path] || isTemporaryBackground(path) || !supportedBackground(path) {
+				continue
+			}
+			if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+				candidates = append(candidates, path)
+				seen[path] = true
 			}
 		}
 	}
-	return ""
+	if len(candidates) == 0 {
+		return ""
+	}
+	if random {
+		return candidates[rand.Intn(len(candidates))]
+	}
+	return candidates[0]
 }
 
 func (r Runtime) backgroundDirectories() []string {
 	return []string{
-		filepath.Join(r.Config.PluginDir, "assets", "backgrounds"),
+		filepath.Join(r.Config.Home, ".local", "state", "omarchy", "current", "theme", "backgrounds"),
 		filepath.Join(r.Config.Home, "Code", "peace", "backgrounds"),
+		filepath.Join(r.Config.PluginDir, "assets", "backgrounds"),
 	}
+}
+
+func isTemporaryBackground(path string) bool {
+	isTemporaryName := func(candidate string) bool {
+		name := strings.ToLower(filepath.Base(candidate))
+		return strings.HasPrefix(name, "temp_") || strings.HasPrefix(name, "tmp_")
+	}
+	if isTemporaryName(path) {
+		return true
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	return err == nil && isTemporaryName(resolved)
 }
 
 func followArtifact(cache string, surah, ayah int, extension string) string {

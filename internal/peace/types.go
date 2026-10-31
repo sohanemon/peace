@@ -18,6 +18,7 @@ type Options struct {
 	Reference string
 	Reciter   string
 	Follow    bool
+	Random    bool
 	Buffer    int
 	Lead      int
 	Jobs      int

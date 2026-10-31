@@ -53,13 +53,19 @@ func Run(argv0 string, args []string) error {
 		return runtime.prepare(rest)
 	case "wallpaper", "random", "next", "prev":
 		wallpaperAction := action
-		if action == "wallpaper" && len(rest) > 0 {
-			wallpaperAction, rest = rest[0], rest[1:]
+		randomBackground := false
+		for _, argument := range rest {
+			if argument == "--random" {
+				randomBackground = true
+				continue
+			}
+			if action == "wallpaper" && wallpaperAction == "wallpaper" {
+				wallpaperAction = argument
+				continue
+			}
+			return fmt.Errorf("peace wallpaper: unexpected argument %q", argument)
 		}
-		if len(rest) != 0 {
-			return fmt.Errorf("peace wallpaper: unexpected argument %q", rest[0])
-		}
-		return runtime.wallpaper(wallpaperAction)
+		return runtime.wallpaper(wallpaperAction, randomBackground)
 	case "init", "uninstall", "enable", "disable", "logs":
 		return runCommand(filepath.Join(runtime.Config.Home, ".local", "bin", "peace-"+action), rest...)
 	default:
@@ -196,8 +202,13 @@ func parseOptions(args []string) (Options, error) {
 		o.Reciter = "ar.alafasy"
 	}
 	for i := 1; i < len(args); {
-		if args[i] == "--follow" {
+		switch args[i] {
+		case "--follow":
 			o.Follow = true
+			i++
+			continue
+		case "--random":
+			o.Random = true
 			i++
 			continue
 		}
@@ -241,6 +252,9 @@ func parseOptions(args []string) (Options, error) {
 	if !safeID(o.Reciter) {
 		return Options{}, errors.New("peace listen: invalid reciter ID")
 	}
+	if o.Random && !o.Follow {
+		return Options{}, errors.New("peace listen: --random requires --follow")
+	}
 	return o, nil
 }
 
@@ -259,4 +273,6 @@ func safeID(s string) bool {
 func printUsage() {
 	fmt.Println("Usage: peace <action> [options]")
 	fmt.Println("  Actions: listen, pause, stop, status, wallpaper, random, next, prev, install, help")
+	fmt.Println("  Wallpaper: peace wallpaper [random|next|prev] [--random]")
+	fmt.Println("  Follow:    peace listen SURAH[:AYAH] --follow [--random]")
 }

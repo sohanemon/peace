@@ -25,12 +25,14 @@ The repository ships a statically linked Linux x86_64 Go command at `bin/peace`;
 
     peace listen 55
     peace listen 55:5-10 --follow --buffer 6 --lead 2 --jobs 2
+    peace listen 55:5-10 --follow --random
+    peace wallpaper --random
     peace pause
     peace stop
     peace status
     peace wallpaper next
 
-Follow works with any active Omarchy theme. It starts audio immediately, then caches upcoming audio and renders upcoming ayah wallpapers in parallel within the configured buffer. If an audio cache is late, playback streams that ayah while caching continues. Wallpapers use the current background and active theme colors, with bundled artwork in `assets/backgrounds` as fallback. Audio text and recitation URLs come from AlQuran Cloud. Listening requires mpv.
+Follow works with any active Omarchy theme. It starts audio immediately, then caches upcoming audio and renders upcoming ayah wallpapers in parallel within the configured buffer. If an audio cache is late, playback streams that ayah while caching continues. Wallpapers use the current background and active theme colors by default. Pass `--random` with `--follow` or `peace wallpaper` to choose a random background from the active theme, Peace theme, and bundled backgrounds. Files named with a `temp_` or `tmp_` prefix are excluded. Audio text and recitation URLs come from AlQuran Cloud. Listening requires mpv.
 
 ## Remove
 
