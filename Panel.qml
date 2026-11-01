@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Io
 import qs.Commons
@@ -15,24 +16,60 @@ Panel {
   readonly property var barIdentity: hostWidget || root
   readonly property string peaceExecutable: decodeURIComponent(String(Qt.resolvedUrl("bin/peace")).replace(/^file:\/\//, ""))
   property string statusText: "Checking playback…"
-  property string requestError: ""
+  property string activeReference: ""
+  property bool pauseRequested: false
   property bool basmalaEnabled: false
   property bool followEnabled: false
   property bool randomBackground: false
+  property bool advancedOptionsExpanded: false
   property string reciterID: "ar.alafasy"
   property int bufferSize: 10
   property int leadSize: 2
   property int workerCount: 2
-
   readonly property color foreground: root.bar ? root.bar.foreground : Color.foreground
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
+  readonly property string homeDirectory: String(Quickshell.env("HOME") || "")
+  readonly property string currentBackgroundLink: homeDirectory + "/.local/state/omarchy/current/background"
+  property string artworkPath: ""
   readonly property bool isPlaying: statusText.indexOf("playing") === 0
+  readonly property bool isPaused: isPlaying && pauseRequested
   readonly property bool isPreparing: statusText.indexOf("preparing") === 0
-  readonly property string playbackState: isPlaying ? "PLAYING" : (isPreparing ? "PREPARING" : "READY")
+  readonly property string playbackStatus: isPaused ? "Paused"
+    : (isPlaying ? "Playing"
+       : (isPreparing ? "Preparing"
+          : (statusText === "Playback status unavailable" ? "Unavailable" : "Ready")))
+  readonly property var surahNames: [
+    "Al-Fatihah", "Al-Baqarah", "Ali 'Imran", "An-Nisa", "Al-Ma'idah", "Al-An'am",
+    "Al-A'raf", "Al-Anfal", "At-Tawbah", "Yunus", "Hud", "Yusuf",
+    "Ar-Ra'd", "Ibrahim", "Al-Hijr", "An-Nahl", "Al-Isra", "Al-Kahf",
+    "Maryam", "Ta-Ha", "Al-Anbiya", "Al-Hajj", "Al-Mu'minun", "An-Nur",
+    "Al-Furqan", "Ash-Shu'ara", "An-Naml", "Al-Qasas", "Al-Ankabut", "Ar-Rum",
+    "Luqman", "As-Sajdah", "Al-Ahzab", "Saba", "Fatir", "Ya-Sin",
+    "As-Saffat", "Sad", "Az-Zumar", "Ghafir", "Fussilat", "Ash-Shura",
+    "Az-Zukhruf", "Ad-Dukhan", "Al-Jathiyah", "Al-Ahqaf", "Muhammad", "Al-Fath",
+    "Al-Hujurat", "Qaf", "Adh-Dhariyat", "At-Tur", "An-Najm", "Al-Qamar",
+    "Ar-Rahman", "Al-Waqi'ah", "Al-Hadid", "Al-Mujadila", "Al-Hashr", "Al-Mumtahanah",
+    "As-Saff", "Al-Jumu'ah", "Al-Munafiqun", "At-Taghabun", "At-Talaq", "At-Tahrim",
+    "Al-Mulk", "Al-Qalam", "Al-Haqqah", "Al-Ma'arij", "Nuh", "Al-Jinn",
+    "Al-Muzzammil", "Al-Muddaththir", "Al-Qiyamah", "Al-Insan", "Al-Mursalat", "An-Naba",
+    "An-Nazi'at", "Abasa", "At-Takwir", "Al-Infitar", "Al-Mutaffifin", "Al-Inshiqaq",
+    "Al-Buruj", "At-Tariq", "Al-A'la", "Al-Ghashiyah", "Al-Fajr", "Al-Balad",
+    "Ash-Shams", "Al-Layl", "Ad-Duha", "Ash-Sharh", "At-Tin", "Al-Alaq",
+    "Al-Qadr", "Al-Bayyinah", "Az-Zalzalah", "Al-Adiyat", "Al-Qari'ah", "At-Takathur",
+    "Al-Asr", "Al-Humazah", "Al-Fil", "Quraysh", "Al-Ma'un", "Al-Kawthar",
+    "Al-Kafirun", "An-Nasr", "Al-Masad", "Al-Ikhlas", "Al-Falaq", "An-Nas"
+  ]
+  readonly property var selectedReferenceMatch: String(referenceInput.text || "").trim().match(/^([0-9]+)(?::([0-9]+)(?:-[0-9]*)?)?$/)
+  readonly property var liveReferenceMatch: String(statusText || "").match(/^playing ([0-9]+):([0-9]+)/)
+  readonly property int currentSurahNumber: liveReferenceMatch ? Number(liveReferenceMatch[1]) : (selectedReferenceMatch ? Number(selectedReferenceMatch[1]) : 0)
+  readonly property int currentAyahNumber: liveReferenceMatch ? Number(liveReferenceMatch[2]) : (selectedReferenceMatch && selectedReferenceMatch[2] ? Number(selectedReferenceMatch[2]) : 1)
+  readonly property string currentSurahName: currentSurahNumber > 0 ? (surahNames[currentSurahNumber - 1] || "Surah " + currentSurahNumber) : "Choose a Surah"
+  readonly property string reciterName: reciterID === "ar.husary" ? "Mahmoud Al-Husary" : "Mishary Alafasy"
 
   function open() {
     root.controller.show()
     refreshStatus()
+    refreshArtwork()
   }
 
   function close() {
@@ -40,8 +77,10 @@ Panel {
   }
 
   function toggle() {
-    if (root.opened) root.close()
-    else root.open()
+    if (root.opened)
+      root.close()
+    else
+      root.open()
   }
 
   function closeForPopoutSwitch() {
@@ -49,17 +88,30 @@ Panel {
   }
 
   function runPeace(args) {
-    if (!root.bar) return
-    var quoted = args.map(function(value) { return Util.shellQuote(String(value)) })
+    if (!root.bar)
+      return
+
+    var quoted = args.map(function(value) {
+      return Util.shellQuote(String(value))
+    })
     root.bar.run(Util.shellQuote(root.peaceExecutable) + " " + quoted.join(" "))
   }
 
   function refreshStatus() {
-    if (!statusProcess.running) statusProcess.running = true
+    if (!statusProcess.running)
+      statusProcess.running = true
+
+  }
+
+  function refreshArtwork() {
+    if (!artworkPathProcess.running)
+      artworkPathProcess.running = true
+
   }
 
   KeyboardPanel {
     id: panel
+
     anchorItem: root.anchorItem
     owner: root.barIdentity
     bar: root.bar
@@ -70,254 +122,424 @@ Panel {
 
     PanelKeyCatcher {
       id: keyCatcher
+
       anchors.fill: parent
-      blocked: referenceInput.activeFocus || reciterInput.popupOpen || basmalaInput.activeFocus
-        || followInput.activeFocus || randomBackgroundInput.activeFocus
+      blocked: referenceInput.activeFocus || reciterInput.popupOpen || basmalaToggle.activeFocus || followToggle.activeFocus || randomBackgroundToggle.activeFocus
       onCloseRequested: root.close()
 
       Column {
         id: content
+
         width: parent.width
-        spacing: Style.space(14)
+        spacing: Style.space(12)
 
-        PanelHero {
+        Row {
           width: parent.width
-          title: "Peace"
-          meta: "QURAN RECITATION"
+          spacing: Style.space(14)
+
+          SeljukStar {
+            starSize: Style.space(52)
+            iconColor: root.foreground
+          }
+
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: "Peace"
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.heading
+            font.bold: true
+          }
+
+        }
+
+        PanelSeparator {
           foreground: root.foreground
-          fontFamily: root.fontFamily
-          iconSize: Style.space(36)
-          iconComponent: Component {
-            Text {
-              textFormat: Text.PlainText
-              text: "󰝚"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.display
-            }
-          }
         }
-
-        Text {
-          visible: root.requestError !== ""
-          width: parent.width
-          text: root.requestError
-          color: Color.urgent
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.bodySmall
-          wrapMode: Text.WordWrap
-        }
-
-        PanelSeparator { foreground: root.foreground }
 
         Column {
           width: parent.width
-          spacing: Style.space(8)
+          spacing: Style.space(10)
 
-          PanelSectionHeader {
-            text: "NOW PLAYING"
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-          }
+          Item {
+            id: artworkFrame
 
-          BorderSurface {
             width: parent.width
-            implicitHeight: statusCardContent.implicitHeight + Style.space(20)
-            radius: Style.cornerRadius
-            color: "transparent"
-            borderSpec: Border.controlSpec("normal", root.foreground, Color.accent)
+            height: Style.space(168)
 
-            Row {
-              id: statusCardContent
+            Image {
+              id: artworkImage
+
               anchors.fill: parent
-              anchors.leftMargin: Style.space(14)
-              anchors.rightMargin: Style.space(14)
-              spacing: Style.space(12)
+              source: root.artworkPath !== "" ? Util.fileUrl(root.artworkPath) : Qt.resolvedUrl("assets/backgrounds/01-pattern.png")
+              fillMode: Image.PreserveAspectCrop
+              asynchronous: true
+              cache: false
+              smooth: true
+              mipmap: true
+              layer.enabled: true
+              onStatusChanged: {
+                if (status === Image.Error && root.artworkPath !== "")
+                  root.artworkPath = ""
 
-              Rectangle {
-                width: Style.space(8)
-                height: width
-                radius: width / 2
-                anchors.verticalCenter: parent.verticalCenter
-                color: root.isPlaying || root.isPreparing ? Color.accent : Qt.darker(root.foreground, 1.6)
               }
 
-              Column {
-                width: parent.width - Style.space(20)
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(2)
-
-                Text {
-                  width: parent.width
-                  text: root.statusText === "not playing" ? "Ready when you are" : root.statusText
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  font.bold: true
-                  elide: Text.ElideRight
-                }
-
-                Text {
-                  width: parent.width
-                  text: root.isPlaying ? "Recitation in progress" : (root.isPreparing ? "Preparing audio" : "Choose an ayah to begin")
-                  color: Qt.darker(root.foreground, 1.5)
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  elide: Text.ElideRight
-                }
+              layer.effect: MultiEffect {
+                maskEnabled: true
+                maskSource: artworkMask
+                maskThresholdMin: 0.5
+                maskSpreadAtMin: 0.02
               }
+
             }
-          }
-        }
 
-        PanelSeparator { foreground: root.foreground }
+            Rectangle {
+              id: artworkMask
 
-        Column {
-          width: parent.width
-          spacing: Style.space(8)
+              anchors.fill: parent
+              radius: Style.cornerRadius
+              color: "white"
+              visible: false
+              layer.enabled: true
+            }
 
-          PanelSectionHeader {
-            text: "RECITATION"
-            foreground: root.foreground
-            fontFamily: root.fontFamily
+            Rectangle {
+              anchors.fill: parent
+              radius: Style.cornerRadius
+              color: Qt.rgba(Color.background.r, Color.background.g, Color.background.b, 0.18)
+            }
+
+            BorderSurface {
+              anchors.fill: parent
+              radius: Style.cornerRadius
+              color: "transparent"
+              borderSpec: Border.controlSpec("normal", root.foreground, Color.accent)
+            }
+
           }
 
           Row {
             width: parent.width
             spacing: Style.space(10)
 
+            Column {
+              width: parent.width - ayahBadge.width - parent.spacing
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(2)
+
+              Text {
+                width: parent.width
+                text: root.currentSurahName
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.title
+                font.bold: true
+                elide: Text.ElideRight
+              }
+
+              Text {
+                width: parent.width
+                text: root.reciterName
+                color: Qt.darker(root.foreground, 1.35)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                elide: Text.ElideRight
+              }
+
+            }
+
+            BorderSurface {
+              id: ayahBadge
+
+              implicitWidth: ayahText.implicitWidth + Style.space(18)
+              implicitHeight: ayahText.implicitHeight + Style.space(10)
+              anchors.verticalCenter: parent.verticalCenter
+              radius: Style.cornerRadius
+              color: Style.selectedFillFor(root.foreground, Color.accent)
+              borderSpec: Border.controlSpec("selected", root.foreground, Color.accent)
+
+              Text {
+                id: ayahText
+
+                anchors.centerIn: parent
+                text: "Ayah " + root.currentAyahNumber
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                font.bold: true
+              }
+
+            }
+
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+
             TextField {
               id: referenceInput
+
               width: Style.space(142)
               text: "55"
               placeholderText: "55:1-10"
               selectByMouse: true
+              horizontalAlignment: TextInput.AlignHCenter
               font.pixelSize: Style.font.subtitle
+              font.bold: true
+              Accessible.name: "Surah and ayah reference"
             }
 
             Dropdown {
               id: reciterInput
+
               width: parent.width - referenceInput.width - parent.spacing
               showLabel: false
               value: root.reciterID
-              options: [
-                { value: "ar.alafasy", label: "Mishary Alafasy" },
-                { value: "ar.husary", label: "Mahmoud Al-Husary" }
-              ]
-              onChanged: function(value) { root.reciterID = value }
-            }
-          }
-
-          Toggle {
-            id: basmalaInput
-            width: parent.width
-            label: "Basmala"
-            description: "Play it, and display it when wallpaper follow is on"
-            checked: root.basmalaEnabled
-            onClicked: root.basmalaEnabled = !root.basmalaEnabled
-          }
-
-          Button {
-            width: parent.width
-            text: "Listen"
-            selected: true
-            onClicked: {
-              var args = ["listen", referenceInput.text.trim(), "--reciter", root.reciterID]
-              args.push("--basmala=" + String(basmalaInput.checked))
-              if (followInput.checked) {
-                args.push("--follow", "--buffer", String(root.bufferSize),
-                  "--lead", String(root.leadSize), "--jobs", String(root.workerCount))
-                if (randomBackgroundInput.checked) args.push("--random")
+              foreground: Qt.darker(root.foreground, 1.2)
+              fontFamily: root.fontFamily
+              Accessible.name: "Reciter"
+              options: [{
+                "value": "ar.alafasy",
+                "label": "Mishary Alafasy"
+              }, {
+                "value": "ar.husary",
+                "label": "Mahmoud Al-Husary"
+              }]
+              onChanged: function(value) {
+                root.reciterID = value
               }
-              root.requestError = ""
-              root.runPeace(args)
-              statusTimer.start()
             }
+
           }
 
           Row {
             width: parent.width
             spacing: Style.space(6)
 
-            Button {
-              width: (parent.width - parent.spacing * 2) / 3
-              text: "Pause"
-              bordered: true
-              onClicked: root.runPeace(["pause"])
+            Rectangle {
+              width: Style.space(7)
+              height: width
+              radius: width / 2
+              anchors.verticalCenter: parent.verticalCenter
+              color: root.isPlaying || root.isPreparing ? Color.accent : Qt.darker(root.foreground, 1.6)
             }
 
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.playbackStatus
+              color: Qt.darker(root.foreground, 1.35)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+          }
+
+          Row {
+            anchors.horizontalCenter: parent.horizontalCenter
+            spacing: Style.space(18)
+
             Button {
-              width: (parent.width - parent.spacing * 2) / 3
-              text: "Stop"
+              width: Style.space(42)
+              iconText: "󰓛"
+              iconSize: Style.font.icon
+              tooltipText: "Stop recitation"
+              Accessible.name: "Stop recitation"
               bordered: true
+              anchors.verticalCenter: parent.verticalCenter
               onClicked: {
                 root.runPeace(["stop"])
                 root.statusText = "not playing"
+                root.activeReference = ""
+                root.pauseRequested = false
               }
             }
 
             Button {
-              width: (parent.width - parent.spacing * 2) / 3
-              text: "Next wallpaper"
+              width: Style.space(58)
+              height: width
+              radius: width / 2
+              iconText: root.isPlaying && !root.isPaused ? "󰏤" : "󰐊"
+              iconSize: Style.font.iconLarge
+              selected: true
+              enabled: !root.isPreparing
+              tooltipText: root.isPlaying && !root.isPaused ? "Pause recitation" : (root.isPaused ? "Resume recitation" : "Play recitation")
+              Accessible.name: root.isPlaying && !root.isPaused ? "Pause recitation" : (root.isPaused ? "Resume recitation" : "Play recitation")
+              onClicked: {
+                var reference = referenceInput.text.trim()
+                if (root.isPlaying && reference === root.activeReference) {
+                  root.runPeace(["pause"])
+                  root.pauseRequested = !root.pauseRequested
+                  return
+                }
+                root.activeReference = reference
+                root.pauseRequested = false
+                var args = ["listen", reference, "--reciter", root.reciterID]
+                args.push("--basmala=" + String(root.basmalaEnabled))
+                if (root.followEnabled) {
+                  args.push("--follow", "--buffer", String(root.bufferSize), "--lead", String(root.leadSize), "--jobs", String(root.workerCount))
+                  if (root.randomBackground)
+                    args.push("--random")
+
+                }
+                root.runPeace(args)
+                statusTimer.start()
+              }
+            }
+
+            Button {
+              width: Style.space(42)
+              iconText: "󰋩"
+              iconSize: Style.font.icon
+              tooltipText: "Show the next ayah wallpaper"
+              Accessible.name: "Show the next ayah wallpaper"
               bordered: true
+              anchors.verticalCenter: parent.verticalCenter
               onClicked: root.runPeace(["wallpaper", "next"])
             }
-          }
-        }
 
-        PanelSeparator { foreground: root.foreground }
-
-        Column {
-          width: parent.width
-          spacing: Style.space(8)
-
-          PanelSectionHeader {
-            text: "WALLPAPER FOLLOW"
-            foreground: root.foreground
-            fontFamily: root.fontFamily
           }
 
           Toggle {
-            id: followInput
+            id: followToggle
+
             width: parent.width
-            label: "Follow the recitation"
-            description: "Set the wallpaper before each ayah"
+            label: "Follow wallpaper"
+            titleSize: Style.font.bodySmall
             checked: root.followEnabled
+            Accessible.name: "Follow wallpaper"
             onClicked: root.followEnabled = !root.followEnabled
           }
 
-          Toggle {
-            id: randomBackgroundInput
-            visible: followInput.checked
+          Button {
             width: parent.width
-            label: "Shuffle backgrounds"
-            description: "Choose from current theme and Peace images"
-            checked: root.randomBackground
-            onClicked: root.randomBackground = !root.randomBackground
+            text: "Advanced options"
+            iconText: root.advancedOptionsExpanded ? "󰅀" : "󰅂"
+            leftAlign: true
+            bordered: true
+            tooltipText: "Basmala and background shuffle options"
+            onClicked: root.advancedOptionsExpanded = !root.advancedOptionsExpanded
           }
+
+          Item {
+            id: advancedOptionsBody
+
+            width: parent.width
+            height: root.advancedOptionsExpanded ? advancedOptionsContent.implicitHeight : 0
+            implicitHeight: height
+            clip: true
+            opacity: root.advancedOptionsExpanded ? 1 : 0
+
+            Row {
+              id: advancedOptionsContent
+
+              width: parent.width
+              spacing: Style.space(8)
+
+              Toggle {
+                id: basmalaToggle
+
+                width: (parent.width - parent.spacing) / 2
+                label: "Basmala"
+                description: ""
+                titleSize: Style.font.bodySmall
+                checked: root.basmalaEnabled
+                Accessible.name: "Basmala introduction"
+                onClicked: root.basmalaEnabled = !root.basmalaEnabled
+              }
+
+              Toggle {
+                id: randomBackgroundToggle
+
+                visible: followToggle.checked
+                width: (parent.width - parent.spacing) / 2
+                label: "Shuffle backgrounds"
+                description: ""
+                titleSize: Style.font.bodySmall
+                checked: root.randomBackground
+                Accessible.name: "Shuffle wallpaper backgrounds"
+                onClicked: root.randomBackground = !root.randomBackground
+              }
+
+            }
+
+            Behavior on height {
+              NumberAnimation {
+                duration: 180
+                easing.type: Easing.OutCubic
+              }
+
+            }
+
+            Behavior on opacity {
+              NumberAnimation {
+                duration: 140
+                easing.type: Easing.OutCubic
+              }
+
+            }
+
+          }
+
         }
 
+      }
+
+    }
+
+  }
+
+  Process {
+    id: artworkPathProcess
+
+    command: ["readlink", "-f", root.currentBackgroundLink]
+
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var path = String(text || "").trim()
+        if (path !== root.artworkPath)
+          root.artworkPath = path
 
       }
     }
+
   }
 
   Process {
     id: statusProcess
+
     command: [root.peaceExecutable, "status"]
+    onExited: function(exitCode) {
+      if (exitCode !== 0 && root.statusText === "Checking playback…")
+        root.statusText = "Playback status unavailable"
+
+    }
+
     stdout: StdioCollector {
       onStreamFinished: {
         var value = String(text).trim()
         root.statusText = value || "not playing"
+        if (value.indexOf("playing") !== 0)
+          root.pauseRequested = false
+        var match = value.match(/^playing ([0-9]+:[0-9]+)/)
+        if (match && root.activeReference === "")
+          root.activeReference = match[1]
+
       }
     }
-    onExited: function(exitCode) {
-      if (exitCode !== 0 && root.statusText === "Checking playback…") root.statusText = "Playback status unavailable"
-    }
+
+  }
+
+  Timer {
+    interval: 3000
+    repeat: true
+    running: root.opened
+    onTriggered: root.refreshArtwork()
   }
 
   Timer {
     id: statusTimer
+
     interval: 1000
     repeat: true
     running: root.opened
@@ -326,5 +548,6 @@ Panel {
 
   Component.onCompleted: {
     root.refreshStatus()
+    root.refreshArtwork()
   }
 }
