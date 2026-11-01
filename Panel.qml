@@ -493,8 +493,8 @@ Panel {
               id: followToggle
 
               width: parent.width
-              implicitHeight: Style.space(38)
               label: "Follow wallpaper"
+              description: "Advance the wallpaper with each ayah"
               titleSize: Style.font.bodySmall
               checked: root.followEnabled
               color: followToggle.activeFocus ? Style.focusFillFor(root.foreground, Color.accent) : "transparent"
@@ -591,9 +591,8 @@ Panel {
                   id: basmalaToggle
 
                   width: parent.width
-                  implicitHeight: Style.space(38)
                   label: "Basmala"
-                  description: ""
+                  description: "Open each Surah with Basmala"
                   titleSize: Style.font.bodySmall
                   checked: root.basmalaEnabled
                   color: basmalaToggle.activeFocus ? Style.focusFillFor(root.foreground, Color.accent) : "transparent"
@@ -607,9 +606,8 @@ Panel {
 
                   visible: followToggle.checked
                   width: parent.width
-                  implicitHeight: Style.space(38)
                   label: "Shuffle backgrounds"
-                  description: ""
+                  description: "Pick a random wallpaper per ayah"
                   titleSize: Style.font.bodySmall
                   checked: root.randomBackground
                   color: randomBackgroundToggle.activeFocus ? Style.focusFillFor(root.foreground, Color.accent) : "transparent"
@@ -622,9 +620,8 @@ Panel {
                   id: translationToggle
 
                   width: parent.width
-                  implicitHeight: Style.space(38)
                   label: "Show translation"
-                  description: ""
+                  description: "Display the ayah translation"
                   titleSize: Style.font.bodySmall
                   checked: root.showTranslation
                   color: translationToggle.activeFocus ? Style.focusFillFor(root.foreground, Color.accent) : "transparent"
@@ -637,9 +634,8 @@ Panel {
                   id: referenceToggle
 
                   width: parent.width
-                  implicitHeight: Style.space(38)
                   label: "Show reference"
-                  description: ""
+                  description: "Display the Surah and ayah number"
                   titleSize: Style.font.bodySmall
                   checked: root.showReference
                   color: referenceToggle.activeFocus ? Style.focusFillFor(root.foreground, Color.accent) : "transparent"
@@ -652,9 +648,8 @@ Panel {
                   id: themeColorsToggle
 
                   width: parent.width
-                  implicitHeight: Style.space(38)
                   label: "Use theme colors"
-                  description: ""
+                  description: "Tint the ayah text with the active theme"
                   titleSize: Style.font.bodySmall
                   checked: root.useThemeColors
                   color: themeColorsToggle.activeFocus ? Style.focusFillFor(root.foreground, Color.accent) : "transparent"
