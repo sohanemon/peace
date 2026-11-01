@@ -186,7 +186,28 @@ func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, outpu
 	if err != nil {
 		return fmt.Errorf("load wallpaper background: %w", err)
 	}
+	var outlineColors [3]color.NRGBA
+	var outlineNeeded [3]bool
+	textY := 0
+	outlineRadius := max(1, min(2, min(width, height)/1200))
+	for i := range rendered {
+		left := (width - rendered[i].Width) / 2
+		top := (height-stackHeight)/2 + textY
+		outlineColors[i], outlineNeeded[i] = adaptiveOutlineColor(backdrop, rendered[i].Image, left, top)
+		textY += rendered[i].Height + gap
+	}
 	shadowText(backdrop, stack, width/2, height/2)
+	textY = 0
+	for i := range rendered {
+		if outlineNeeded[i] {
+			left := (width - rendered[i].Width) / 2
+			top := (height-stackHeight)/2 + textY
+			outline := outlineText(rendered[i].Image, outlineColors[i], outlineRadius)
+			outlineBounds := image.Rect(left, top, left+outline.Bounds().Dx(), top+outline.Bounds().Dy())
+			draw.Draw(backdrop, outlineBounds, outline, image.Point{}, draw.Over)
+		}
+		textY += rendered[i].Height + gap
+	}
 	compositeCentered(backdrop, stack, width/2, height/2)
 	if err := os.MkdirAll(filepath.Dir(output), 0o700); err != nil {
 		return err
@@ -376,6 +397,95 @@ func loadBackdrop(path string, width, height int, fallback string) (*image.RGBA,
 func compositeCentered(backdrop, overlay *image.RGBA, centerX, centerY int) {
 	left, top := centerX-overlay.Bounds().Dx()/2, centerY-overlay.Bounds().Dy()/2
 	draw.Draw(backdrop, image.Rect(left, top, left+overlay.Bounds().Dx(), top+overlay.Bounds().Dy()), overlay, image.Point{}, draw.Over)
+}
+
+func adaptiveOutlineColor(backdrop, text *image.RGBA, left, top int) (color.NRGBA, bool) {
+	var backgroundLightness float64
+	var samples, lowContrast int
+	height, width := text.Bounds().Dy(), text.Bounds().Dx()
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			ink := text.RGBAAt(x, y)
+			if ink.A < 192 {
+				continue
+			}
+			backgroundX, backgroundY := left+x, top+y
+			if !image.Pt(backgroundX, backgroundY).In(backdrop.Bounds()) {
+				continue
+			}
+			background := backdrop.RGBAAt(backgroundX, backgroundY)
+			alpha := float64(ink.A) / 255
+			red := min(255, int(float64(ink.R)/alpha))
+			green := min(255, int(float64(ink.G)/alpha))
+			blue := min(255, int(float64(ink.B)/alpha))
+			backgroundLuminosity := relativeLuminance(background.R, background.G, background.B)
+			fillLuminosity := relativeLuminance(uint8(red), uint8(green), uint8(blue))
+			samples++
+			if contrastRatio(fillLuminosity, backgroundLuminosity) < 3 {
+				lowContrast++
+				backgroundLightness += backgroundLuminosity
+			}
+		}
+	}
+	if samples == 0 || lowContrast*10 < samples {
+		return color.NRGBA{}, false
+	}
+	if backgroundLightness/float64(lowContrast) > 0.179 {
+		return color.NRGBA{A: 200}, true
+	}
+	return color.NRGBA{R: 255, G: 255, B: 255, A: 200}, true
+}
+
+func outlineText(text *image.RGBA, outlineColor color.NRGBA, radius int) *image.RGBA {
+	width, height := text.Bounds().Dx(), text.Bounds().Dy()
+	original := image.NewAlpha(text.Bounds())
+	dilated := image.NewAlpha(text.Bounds())
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			alpha := text.RGBAAt(x, y).A
+			original.SetAlpha(x, y, color.Alpha{A: alpha})
+			if alpha == 0 {
+				continue
+			}
+			for offsetY := max(0, y-radius); offsetY <= min(height-1, y+radius); offsetY++ {
+				for offsetX := max(0, x-radius); offsetX <= min(width-1, x+radius); offsetX++ {
+					if alpha > dilated.AlphaAt(offsetX, offsetY).A {
+						dilated.SetAlpha(offsetX, offsetY, color.Alpha{A: alpha})
+					}
+				}
+			}
+		}
+	}
+	outlineMask := image.NewAlpha(text.Bounds())
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			outer := int(dilated.AlphaAt(x, y).A) - int(original.AlphaAt(x, y).A)
+			if outer > 0 {
+				outlineMask.SetAlpha(x, y, color.Alpha{A: uint8(outer)})
+			}
+		}
+	}
+	outline := image.NewRGBA(text.Bounds())
+	draw.DrawMask(outline, outline.Bounds(), image.NewUniform(outlineColor), image.Point{}, outlineMask, image.Point{}, draw.Over)
+	return outline
+}
+
+func contrastRatio(first, second float64) float64 {
+	if first < second {
+		first, second = second, first
+	}
+	return (first + 0.05) / (second + 0.05)
+}
+
+func relativeLuminance(red, green, blue uint8) float64 {
+	linear := func(channel uint8) float64 {
+		value := float64(channel) / 255
+		if value <= 0.04045 {
+			return value / 12.92
+		}
+		return math.Pow((value+0.055)/1.055, 2.4)
+	}
+	return 0.2126*linear(red) + 0.7152*linear(green) + 0.0722*linear(blue)
 }
 
 func shadowText(backdrop, text *image.RGBA, centerX, centerY int) {

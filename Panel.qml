@@ -170,22 +170,54 @@ Panel {
         width: parent.width
         spacing: Style.space(12)
 
-        Row {
+        Item {
           width: parent.width
-          spacing: Style.space(14)
+          height: headerLeft.height
 
-          SeljukStar {
-            starSize: Style.space(52)
-            iconColor: root.foreground
+          Row {
+            id: headerLeft
+
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(14)
+
+            SeljukStar {
+              starSize: Style.space(52)
+              iconColor: root.foreground
+            }
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: "Peace"
+              color: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.heading
+              font.bold: true
+            }
+
           }
 
-          Text {
+          Row {
+            anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            text: "Peace"
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.heading
-            font.bold: true
+            spacing: Style.space(6)
+
+            Rectangle {
+              width: Style.space(5)
+              height: width
+              radius: width / 2
+              anchors.verticalCenter: parent.verticalCenter
+              color: root.isPlaying || root.isPreparing ? Color.accent : Qt.darker(root.foreground, 1.8)
+            }
+
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.playbackStatus
+              color: Qt.darker(root.foreground, 1.5)
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
           }
 
         }
@@ -397,143 +429,204 @@ Panel {
 
           }
 
-          Row {
+          Column {
             width: parent.width
-            spacing: Style.space(8)
-
-            TextField {
-              id: referenceInput
-
-              width: Style.space(142)
-              text: "55"
-              placeholderText: "55:1-10"
-              selectByMouse: true
-              horizontalAlignment: TextInput.AlignHCenter
-              font.pixelSize: Style.font.subtitle
-              font.bold: true
-              Accessible.name: "Surah and ayah reference"
-            }
-
-            Dropdown {
-              id: reciterInput
-
-              width: parent.width - referenceInput.width - parent.spacing
-              showLabel: false
-              value: root.reciterID
-              foreground: Qt.darker(root.foreground, 1.2)
-              fontFamily: root.fontFamily
-              Accessible.name: "Reciter"
-              options: [{
-                "value": "ar.alafasy",
-                "label": "Mishary Alafasy"
-              }, {
-                "value": "ar.husary",
-                "label": "Mahmoud Al-Husary"
-              }]
-              onChanged: function(value) {
-                root.reciterID = value
-              }
-            }
-
-          }
-
-          Row {
-            width: parent.width
-            spacing: Style.space(6)
-
-            Rectangle {
-              width: Style.space(7)
-              height: width
-              radius: width / 2
-              anchors.verticalCenter: parent.verticalCenter
-              color: root.isPlaying || root.isPreparing ? Color.accent : Qt.darker(root.foreground, 1.6)
-            }
-
-            Text {
-              anchors.verticalCenter: parent.verticalCenter
-              text: root.playbackStatus
-              color: Qt.darker(root.foreground, 1.35)
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-            }
-
-          }
-
-          Toggle {
-            id: followToggle
-
-            width: parent.width
-            label: "Follow wallpaper"
-            titleSize: Style.font.bodySmall
-            checked: root.followEnabled
-            Accessible.name: "Follow wallpaper"
-            onClicked: root.followEnabled = !root.followEnabled
-          }
-
-          Button {
-            width: parent.width
-            text: "Advanced options"
-            iconText: root.advancedOptionsExpanded ? "󰅀" : "󰅂"
-            leftAlign: true
-            bordered: true
-            tooltipText: "Basmala and background shuffle options"
-            onClicked: root.advancedOptionsExpanded = !root.advancedOptionsExpanded
-          }
-
-          Item {
-            id: advancedOptionsBody
-
-            width: parent.width
-            height: root.advancedOptionsExpanded ? advancedOptionsContent.implicitHeight : 0
-            implicitHeight: height
-            clip: true
-            opacity: root.advancedOptionsExpanded ? 1 : 0
+            spacing: Style.space(2)
 
             Row {
-              id: advancedOptionsContent
+              width: parent.width
+              height: referenceInput.height
+              spacing: Style.spacing.sm
+
+              TextField {
+                id: referenceInput
+
+                width: Style.space(84)
+                height: Style.spacing.controlHeight
+                text: "55"
+                placeholderText: "55:1-10"
+                selectByMouse: true
+                horizontalAlignment: TextInput.AlignHCenter
+                font.pixelSize: Style.font.body
+                font.bold: true
+                foreground: Qt.darker(root.foreground, 1.2)
+                Accessible.name: "Surah and ayah reference"
+              }
+
+              Dropdown {
+                id: reciterInput
+
+                width: parent.width - referenceInput.width - parent.spacing
+                rowHeight: referenceInput.height
+                showLabel: false
+                value: root.reciterID
+                foreground: Qt.darker(root.foreground, 1.2)
+                fontFamily: root.fontFamily
+                Accessible.name: "Reciter"
+                options: [{
+                  "value": "ar.alafasy",
+                  "label": "Mishary Alafasy"
+                }, {
+                  "value": "ar.husary",
+                  "label": "Mahmoud Al-Husary"
+                }]
+                onChanged: function(value) {
+                  root.reciterID = value
+                }
+              }
+
+            }
+
+            PanelSeparator {
+              foreground: root.foreground
+              strength: 0.1
+            }
+
+            Toggle {
+              id: followToggle
 
               width: parent.width
-              spacing: Style.space(8)
+              implicitHeight: Style.space(38)
+              label: "Follow wallpaper"
+              titleSize: Style.font.bodySmall
+              checked: root.followEnabled
+              color: followToggle.activeFocus ? Style.focusFillFor(root.foreground, Color.accent) : "transparent"
+              borderSpec: Border.none()
+              Accessible.name: "Follow wallpaper"
+              onClicked: root.followEnabled = !root.followEnabled
+            }
 
-              Toggle {
-                id: basmalaToggle
+            PanelSeparator {
+              foreground: root.foreground
+              strength: 0.08
+            }
 
-                width: (parent.width - parent.spacing) / 2
-                label: "Basmala"
-                description: ""
-                titleSize: Style.font.bodySmall
-                checked: root.basmalaEnabled
-                Accessible.name: "Basmala introduction"
-                onClicked: root.basmalaEnabled = !root.basmalaEnabled
+            Item {
+              id: advancedOptionsRow
+
+              width: parent.width
+              height: Style.space(38)
+              Accessible.name: "Advanced options"
+              Accessible.role: Accessible.Button
+
+              Rectangle {
+                anchors.fill: parent
+                radius: Style.cornerRadius
+                color: advancedOptionsMouse.containsMouse ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent"
+
+                Behavior on color {
+                  ColorAnimation {
+                    duration: 100
+                  }
+
+                }
+
               }
 
-              Toggle {
-                id: randomBackgroundToggle
+              Text {
+                anchors.left: parent.left
+                anchors.leftMargin: Style.spacing.rowPaddingX
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Advanced options"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                font.bold: true
+              }
 
-                visible: followToggle.checked
-                width: (parent.width - parent.spacing) / 2
-                label: "Shuffle backgrounds"
-                description: ""
-                titleSize: Style.font.bodySmall
-                checked: root.randomBackground
-                Accessible.name: "Shuffle wallpaper backgrounds"
-                onClicked: root.randomBackground = !root.randomBackground
+              Text {
+                anchors.right: parent.right
+                anchors.rightMargin: Style.spacing.rowPaddingX
+                anchors.verticalCenter: parent.verticalCenter
+                text: "󰅂"
+                color: Qt.darker(root.foreground, 1.3)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                rotation: root.advancedOptionsExpanded ? 90 : 0
+
+                Behavior on rotation {
+                  NumberAnimation {
+                    duration: 160
+                    easing.type: Easing.OutCubic
+                  }
+
+                }
+
+              }
+
+              MouseArea {
+                id: advancedOptionsMouse
+
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.advancedOptionsExpanded = !root.advancedOptionsExpanded
               }
 
             }
 
-            Behavior on height {
-              NumberAnimation {
-                duration: 180
-                easing.type: Easing.OutCubic
+            Item {
+              id: advancedOptionsBody
+
+              width: parent.width
+              height: root.advancedOptionsExpanded ? advancedOptionsContent.implicitHeight : 0
+              implicitHeight: height
+              clip: true
+              opacity: root.advancedOptionsExpanded ? 1 : 0
+
+              Column {
+                id: advancedOptionsContent
+
+                width: parent.width
+                spacing: Style.space(2)
+
+                Toggle {
+                  id: basmalaToggle
+
+                  width: parent.width
+                  implicitHeight: Style.space(38)
+                  label: "Basmala"
+                  description: ""
+                  titleSize: Style.font.bodySmall
+                  checked: root.basmalaEnabled
+                  color: basmalaToggle.activeFocus ? Style.focusFillFor(root.foreground, Color.accent) : "transparent"
+                  borderSpec: Border.none()
+                  Accessible.name: "Basmala introduction"
+                  onClicked: root.basmalaEnabled = !root.basmalaEnabled
+                }
+
+                Toggle {
+                  id: randomBackgroundToggle
+
+                  visible: followToggle.checked
+                  width: parent.width
+                  implicitHeight: Style.space(38)
+                  label: "Shuffle backgrounds"
+                  description: ""
+                  titleSize: Style.font.bodySmall
+                  checked: root.randomBackground
+                  color: randomBackgroundToggle.activeFocus ? Style.focusFillFor(root.foreground, Color.accent) : "transparent"
+                  borderSpec: Border.none()
+                  Accessible.name: "Shuffle wallpaper backgrounds"
+                  onClicked: root.randomBackground = !root.randomBackground
+                }
+
               }
 
-            }
+              Behavior on height {
+                NumberAnimation {
+                  duration: 180
+                  easing.type: Easing.OutCubic
+                }
 
-            Behavior on opacity {
-              NumberAnimation {
-                duration: 140
-                easing.type: Easing.OutCubic
+              }
+
+              Behavior on opacity {
+                NumberAnimation {
+                  duration: 140
+                  easing.type: Easing.OutCubic
+                }
+
               }
 
             }
