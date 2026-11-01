@@ -14,7 +14,7 @@ Panel {
   property var hostWidget: null
   property var anchorItem: null
   readonly property var barIdentity: hostWidget || root
-  readonly property string peaceExecutable: Qt.resolvedUrl("bin/peace").toLocalFile()
+  readonly property string peaceExecutable: decodeURIComponent(String(Qt.resolvedUrl("bin/peace")).replace(/^file:\/\//, ""))
   property string statusText: "Checking playback…"
   property string requestError: ""
 
@@ -100,7 +100,7 @@ Panel {
 
         CheckBox {
           id: basmalaInput
-          text: "Show and recite introductory Basmala"
+          text: "Show and recite Basmala (wallpaper needs Follow)"
           checked: false
         }
 
@@ -196,7 +196,7 @@ Panel {
             text: "Listen"
             onClicked: {
               var args = ["listen", referenceInput.text.trim(), "--reciter", reciterInput.currentText]
-              if (basmalaInput.checked) args.push("--basmala")
+              args.push("--basmala=" + String(basmalaInput.checked))
               if (followInput.checked) {
                 args.push("--follow", "--buffer", String(bufferInput.value),
                   "--lead", String(leadInput.value), "--jobs", String(jobsInput.value))

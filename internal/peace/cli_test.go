@@ -108,6 +108,17 @@ func TestUnknownFlagShowsCommandUsage(t *testing.T) {
 	}
 }
 
+func TestListenAcceptsExplicitBasmalaValue(t *testing.T) {
+	for _, value := range []string{"true", "false"} {
+		cmd := newRootCommand(Runtime{})
+		cmd.SetArgs([]string{"listen", "invalid", "--basmala=" + value})
+		err := executeRoot(cmd)
+		if err == nil || strings.Contains(err.Error(), "unknown flag") {
+			t.Errorf("explicit --basmala=%s was not accepted: %v", value, err)
+		}
+	}
+}
+
 func TestUnknownCommandSuggestsCloseMatch(t *testing.T) {
 	cmd := newRootCommand(Runtime{})
 	cmd.SetArgs([]string{"liset"})
