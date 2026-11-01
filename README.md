@@ -20,7 +20,7 @@ omarchy plugin remove io.github.sohanemon.omapeace
 
 ## Commands
 
-    peace listen SURAH[:AYAH|:START-END|:START-] [--follow] [--random] [--reciter ID] [--buffer N] [--lead N] [--jobs N]
+    peace listen SURAH[:AYAH|:START-END|:START-] [--basmala] [--follow] [--random] [--reciter ID] [--buffer N] [--lead N] [--jobs N]
     peace pause
     peace stop
     peace status
@@ -28,7 +28,7 @@ omarchy plugin remove io.github.sohanemon.omapeace
 
     peace listen 55
     peace listen 55:5-10 --follow --buffer 6 --lead 2 --jobs 2
-    peace listen 110 --follow --random --reciter ar.alafasy
+    peace listen 110 --follow --random --basmala --reciter ar.alafasy
     peace wallpaper --random
     peace wallpaper next
     peace wallpaper prev
@@ -37,6 +37,8 @@ omarchy plugin remove io.github.sohanemon.omapeace
     peace status
 
 Follow works with any active Omarchy theme. It starts audio immediately, then caches upcoming audio and renders upcoming ayah wallpapers in parallel within the configured buffer. If an audio cache is late, playback streams that ayah while caching continues. Wallpapers use the current background and active theme colors by default. Pass `--random` with `--follow` or `peace wallpaper --random` to choose a random background from the active theme, Peace theme, and bundled backgrounds. Audio text and recitation URLs come from AlQuran Cloud. Listening requires mpv.
+
+The introductory Basmala is hidden and not played by default. Pass `--basmala` to show it on the first ayah wallpaper and play it before that ayah. `--basmala=false` explicitly keeps it hidden and silent.
 
 ## Build and install
 

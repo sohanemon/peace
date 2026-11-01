@@ -134,8 +134,8 @@ func newListenCommand(runtime Runtime) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "listen SURAH[:AYAH|:START-END|:START-]",
 		Short:   "Play Quran recitation",
-		Long:    "Play one ayah, an ayah range, or the rest of a surah. Use --follow to update the wallpaper as playback advances.",
-		Example: "  peace listen 2:255\n  peace listen 18:1-10 --reciter ar.alafasy\n  peace listen 110 --follow --random",
+		Long:    "Play one ayah, an ayah range, or the rest of a surah. Use --follow to update the wallpaper as playback advances. Use --basmala to show and play the introductory Basmala.",
+		Example: "  peace listen 2:255\n  peace listen 18:1-10 --reciter ar.alafasy\n  peace listen 110 --follow --random --basmala",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
 				return &cliUsageError{err: errors.New("peace listen: ayah reference is required")}
@@ -169,6 +169,7 @@ func newListenCommand(runtime Runtime) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&options.Follow, "follow", false, "Update wallpaper as each ayah plays")
 	cmd.Flags().BoolVar(&options.Random, "random", false, "Choose a random current background (requires --follow)")
+	cmd.Flags().BoolVar(&options.Basmala, "basmala", false, "Show and play the introductory Basmala")
 	cmd.Flags().StringVar(&options.Reciter, "reciter", options.Reciter, "Reciter ID")
 	cmd.Flags().IntVar(&options.Buffer, "buffer", 10, "Upcoming ayahs to buffer (1-20)")
 	cmd.Flags().IntVar(&options.Lead, "lead", 2, "Wallpapers to prepare ahead (1-5)")

@@ -204,7 +204,7 @@ func (r Runtime) prepare(args []string) error {
 	} else {
 		for attempt := 1; attempt <= 2; attempt++ {
 			tempImage := image + ".tmp.png"
-			if renderErr = r.renderAyah(surah, ayah, state.BaseImage, tempImage); renderErr == nil {
+			if renderErr = r.renderAyah(surah, ayah, state.BaseImage, tempImage, state.Basmala); renderErr == nil {
 				renderErr = os.Rename(tempImage, image)
 				if renderErr == nil {
 					break
@@ -222,14 +222,14 @@ func (r Runtime) prepare(args []string) error {
 	return nil
 }
 
-func (r Runtime) prepareInitialWallpaper(surah, ayah int, baseImage string) error {
+func (r Runtime) prepareInitialWallpaper(surah, ayah int, baseImage string, basmala bool) error {
 	cache := filepath.Join(r.Config.CacheDir, "follow")
 	if err := os.MkdirAll(cache, 0o700); err != nil {
 		return err
 	}
 	image := followArtifact(cache, surah, ayah, ".png")
 	temp := image + ".tmp.png"
-	if err := r.renderAyah(surah, ayah, baseImage, temp); err != nil {
+	if err := r.renderAyah(surah, ayah, baseImage, temp, basmala); err != nil {
 		_ = os.Remove(temp)
 		return err
 	}
@@ -288,7 +288,6 @@ func (r Runtime) follow() error {
 	lastTitle := ""
 	waitAyah := 0
 	waitStarted := time.Time{}
-	preloadedWallpaper := 0
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 	for r.mpvAlive() {
@@ -303,23 +302,19 @@ func (r Runtime) follow() error {
 		}
 	audioPrefetchComplete:
 		now := time.Now()
-		properties, _ := r.properties("idle-active", "playlist-pos", "playlist-count", "media-title", "pause", "playback-time", "duration")
+		properties, _ := r.properties("idle-active", "playlist-pos", "playlist-count", "media-title", "pause")
 		idle := properties["idle-active"]
 		position := properties["playlist-pos"]
 		count := properties["playlist-count"]
 		title := properties["media-title"]
 		paused := properties["pause"]
-		playbackTime := properties["playback-time"]
-		duration := properties["duration"]
 		idleActive, _ := idle.(bool)
 		positionValue, hasPosition := position.(float64)
 		playlistCount, hasCount := count.(float64)
 		mediaTitle, _ := title.(string)
 		if !idleActive {
-			ayah, ok := titleAyah(mediaTitle, state.Surah)
-			if !ok && hasPosition {
-				ayah = state.Start + int(positionValue)
-				ok = true
+			ayah, ok := followTrackAyah(mediaTitle, int(positionValue), hasPosition, state)
+			if ok && mediaTitle == "" {
 				mediaTitle = fmt.Sprintf("%d:%d", state.Surah, ayah)
 			}
 			if ok {
@@ -328,21 +323,7 @@ func (r Runtime) follow() error {
 					r.logEvent("audio started " + mediaTitle)
 					lastTitle = mediaTitle
 				}
-				if current == preloadedWallpaper {
-					preloadedWallpaper = 0
-				} else if preloadedWallpaper != current+1 {
-					r.displayWallpaper(cache, state.Surah, current)
-				}
-			}
-		}
-		if elapsed, elapsedOK := playbackTime.(float64); elapsedOK {
-			if length, lengthOK := duration.(float64); lengthOK && current < state.End && length-elapsed <= 0.45 {
-				next := current + 1
-				if next-state.Start < appendIndex && fileExists(followArtifact(cache, state.Surah, next, ".png")) {
-					if r.displayWallpaper(cache, state.Surah, next) {
-						preloadedWallpaper = next
-					}
-				}
+				r.displayWallpaper(cache, state.Surah, current)
 			}
 		}
 		pausedValue, _ := paused.(bool)
@@ -410,7 +391,11 @@ func (r Runtime) follow() error {
 				active++
 			}
 		}
-		if appendIndex >= total && idleActive && hasCount && int(playlistCount) >= total {
+		playlistExtra := 0
+		if state.IntroAudioURL != "" {
+			playlistExtra = 1
+		}
+		if appendIndex >= total && idleActive && hasCount && int(playlistCount) >= total+playlistExtra {
 			_, _ = r.sendIPC(map[string]any{"command": []any{"quit"}, "request_id": 2})
 			return nil
 		}
@@ -530,6 +515,25 @@ func titleAyah(title string, surah int) (int, bool) {
 		return 0, false
 	}
 	return ayah, true
+}
+
+func followTrackAyah(title string, position int, hasPosition bool, state PlayState) (int, bool) {
+	if state.IntroAudioURL != "" && title == "Introductory Basmala" {
+		return 0, false
+	}
+	if ayah, ok := titleAyah(title, state.Surah); ok {
+		return ayah, true
+	}
+	if !hasPosition {
+		return 0, false
+	}
+	if state.IntroAudioURL != "" {
+		position--
+	}
+	if position < 0 {
+		return 0, false
+	}
+	return state.Start + position, true
 }
 
 func fileExists(path string) bool { _, err := os.Stat(path); return err == nil }

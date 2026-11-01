@@ -48,6 +48,13 @@ func (r Runtime) listenOptions(o Options) error {
 	if err != nil {
 		return fmt.Errorf("peace listen: unable to fetch audio for surah %d (%s): %w", surah, o.Reciter, err)
 	}
+	introURL := ""
+	if shouldUseBasmala(o.Basmala, surah, start) {
+		introURL, err = r.basmalaAudioURL(ctx, o.Reciter)
+		if err != nil {
+			return fmt.Errorf("peace listen: unable to fetch introductory Basmala for %s: %w", o.Reciter, err)
+		}
+	}
 	if _, err := exec.LookPath("mpv"); err != nil {
 		return errors.New("peace listen: mpv is required")
 	}
@@ -58,16 +65,16 @@ func (r Runtime) listenOptions(o Options) error {
 			return fmt.Errorf("peace listen: snapshot current wallpaper: %w", err)
 		}
 	}
-	state := PlayState{Surah: surah, Start: start, End: end, Reciter: o.Reciter, Follow: o.Follow, BaseImage: baseImage, Preparing: o.Follow}
+	state := PlayState{Surah: surah, Start: start, End: end, Reciter: o.Reciter, Follow: o.Follow, Basmala: o.Basmala, BaseImage: baseImage, Preparing: o.Follow}
 	if o.Follow {
-		state.AudioURLs, state.Buffer, state.Lead, state.Jobs = urls, o.Buffer, o.Lead, o.Jobs
+		state.AudioURLs, state.IntroAudioURL, state.Buffer, state.Lead, state.Jobs = urls, introURL, o.Buffer, o.Lead, o.Jobs
 		if err := os.MkdirAll(r.Config.StateDir, 0o700); err != nil {
 			return err
 		}
 		fmt.Println("Preparing first wallpapers…")
 		leadEnd := min(end, start+o.Lead-1)
 		for ayah := start; ayah <= leadEnd; ayah++ {
-			if err := r.prepareInitialWallpaper(surah, ayah, baseImage); err != nil {
+			if err := r.prepareInitialWallpaper(surah, ayah, baseImage, o.Basmala); err != nil {
 				if ayah == start {
 					return fmt.Errorf("peace listen: prepare first ayah wallpaper: %w", err)
 				}
@@ -89,6 +96,12 @@ func (r Runtime) listenOptions(o Options) error {
 			_ = r.stop()
 			return err
 		}
+		if introURL != "" {
+			if err := r.appendAudio(introURL, "Introductory Basmala"); err != nil {
+				_ = r.stop()
+				return fmt.Errorf("peace listen: start introductory Basmala: %w", err)
+			}
+		}
 		if err := r.appendAudio(urls[0], fmt.Sprintf("%d:%d", surah, start)); err != nil {
 			_ = r.stop()
 			return fmt.Errorf("peace listen: start first ayah: %w", err)
@@ -100,7 +113,7 @@ func (r Runtime) listenOptions(o Options) error {
 		}
 	} else {
 		args := []string{"--no-video", "--no-terminal", "--gapless-audio=yes", "--prefetch-playlist=yes", "--input-ipc-server=" + r.Config.Socket}
-		args = append(args, urls...)
+		args = append(args, playbackAudioURLs(urls, introURL)...)
 		if err := r.startMPV(args); err != nil {
 			_ = r.stop()
 			return err
@@ -114,6 +127,26 @@ func (r Runtime) listenOptions(o Options) error {
 		fmt.Println("Playback started; buffering upcoming ayahs and wallpapers")
 	}
 	return nil
+}
+
+func needsIntroductoryBasmala(surah, start int) bool {
+	return start == 1 && hasIntroductoryBasmala(surah)
+}
+
+func hasIntroductoryBasmala(surah int) bool {
+	return surah != 1 && surah != 9
+}
+
+func shouldUseBasmala(enabled bool, surah, start int) bool {
+	return enabled && needsIntroductoryBasmala(surah, start)
+}
+
+func playbackAudioURLs(urls []string, introURL string) []string {
+	ordered := make([]string, 0, len(urls)+1)
+	if introURL != "" {
+		ordered = append(ordered, introURL)
+	}
+	return append(ordered, urls...)
 }
 
 func parseReference(ref string) (int, int, int, error) {
@@ -195,6 +228,24 @@ func (r Runtime) audioURLs(ctx context.Context, surah, start, end int, reciter s
 		return nil, errors.New("audio URLs are incomplete")
 	}
 	return urls, nil
+}
+
+func (r Runtime) basmalaAudioURL(ctx context.Context, reciter string) (string, error) {
+	var response APIResponse
+	url := fmt.Sprintf("https://api.alquran.cloud/v1/ayah/1:1/%s", reciter)
+	if err := getJSON(ctx, url, &response); err != nil {
+		return "", err
+	}
+	var data struct {
+		Audio string `json:"audio"`
+	}
+	if err := json.Unmarshal(response.Data, &data); err != nil {
+		return "", err
+	}
+	if data.Audio == "" {
+		return "", errors.New("Basmala audio URL missing")
+	}
+	return data.Audio, nil
 }
 
 var httpClient = &http.Client{Timeout: 30 * time.Second}

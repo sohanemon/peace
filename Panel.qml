@@ -99,6 +99,12 @@ Panel {
         }
 
         CheckBox {
+          id: basmalaInput
+          text: "Show and recite introductory Basmala"
+          checked: false
+        }
+
+        CheckBox {
           id: followInput
           text: "Follow ayah wallpaper"
           checked: false
@@ -190,6 +196,7 @@ Panel {
             text: "Listen"
             onClicked: {
               var args = ["listen", referenceInput.text.trim(), "--reciter", reciterInput.currentText]
+              if (basmalaInput.checked) args.push("--basmala")
               if (followInput.checked) {
                 args.push("--follow", "--buffer", String(bufferInput.value),
                   "--lead", String(leadInput.value), "--jobs", String(jobsInput.value))

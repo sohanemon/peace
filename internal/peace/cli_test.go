@@ -38,7 +38,7 @@ func TestListenHelpShowsListenUsageAndExamples(t *testing.T) {
 	if err := executeRoot(cmd); err != nil {
 		t.Fatalf("execute listen help: %v", err)
 	}
-	for _, want := range []string{"peace listen", "SURAH", "--follow", "Examples:"} {
+	for _, want := range []string{"peace listen", "SURAH", "--follow", "--basmala", "Examples:"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("listen help missing %q:\n%s", want, stdout.String())
 		}

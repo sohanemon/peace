@@ -19,6 +19,7 @@ type Options struct {
 	Reciter   string
 	Follow    bool
 	Random    bool
+	Basmala   bool
 	Buffer    int
 	Lead      int
 	Jobs      int
@@ -26,19 +27,21 @@ type Options struct {
 
 // PlayState represents the current playback state of a recitation session.
 type PlayState struct {
-	Surah     int      `json:"surah"`
-	Start     int      `json:"start"`
-	End       int      `json:"end"`
-	Reciter   string   `json:"reciter"`
-	Follow    bool     `json:"follow"`
-	BaseImage string   `json:"base_image,omitempty"`
-	AudioURLs []string `json:"audio_urls,omitempty"`
-	Buffer    int      `json:"buffer,omitempty"`
-	Lead      int      `json:"lead,omitempty"`
-	Jobs      int      `json:"jobs,omitempty"`
-	Preparing bool     `json:"preparing"`
-	Ready     int      `json:"ready"`
-	Appended  int      `json:"appended"`
+	Surah         int      `json:"surah"`
+	Start         int      `json:"start"`
+	End           int      `json:"end"`
+	Reciter       string   `json:"reciter"`
+	Follow        bool     `json:"follow"`
+	Basmala       bool     `json:"basmala"`
+	BaseImage     string   `json:"base_image,omitempty"`
+	AudioURLs     []string `json:"audio_urls,omitempty"`
+	IntroAudioURL string   `json:"intro_audio_url,omitempty"`
+	Buffer        int      `json:"buffer,omitempty"`
+	Lead          int      `json:"lead,omitempty"`
+	Jobs          int      `json:"jobs,omitempty"`
+	Preparing     bool     `json:"preparing"`
+	Ready         int      `json:"ready"`
+	Appended      int      `json:"appended"`
 }
 
 // APIResponse is the envelope returned by the Quran API.

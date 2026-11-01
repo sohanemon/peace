@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/go-text/typesetting/di"
 	"github.com/go-text/typesetting/font"
@@ -84,12 +85,55 @@ var fontFaces struct {
 	err                 error
 }
 
-func (r Runtime) renderAyah(surah, ayah int, baseImage, output string) error {
+func (r Runtime) renderAyah(surah, ayah int, baseImage, output string, showBasmala bool) error {
 	text, err := fetchAyahText(surah, ayah)
 	if err != nil {
 		return err
 	}
+	text.Arabic = displayAyahArabic(surah, ayah, text.Arabic, showBasmala)
 	return r.renderAyahText(surah, ayah, text, baseImage, output)
+}
+
+func displayAyahArabic(surah, ayah int, text string, showBasmala bool) string {
+	if !showBasmala && ayah == 1 && hasIntroductoryBasmala(surah) {
+		return removeIntroductoryBasmala(text)
+	}
+	return text
+}
+
+func removeIntroductoryBasmala(text string) string {
+	phrase := []rune("بسماللهالرحمنالرحيم")
+	runes := []rune(strings.TrimSpace(text))
+	letterPositions := make([]int, 0, len(phrase))
+	letters := make([]rune, 0, len(phrase))
+	for position, current := range runes {
+		if unicode.IsLetter(current) {
+			letters = append(letters, normalizeArabicLetter(current))
+			letterPositions = append(letterPositions, position)
+		}
+	}
+	if len(letters) < len(phrase) || string(letters[:len(phrase)]) != string(phrase) {
+		return text
+	}
+	position := letterPositions[len(phrase)-1] + 1
+	for position < len(runes) && (unicode.Is(unicode.Mn, runes[position]) || unicode.IsSpace(runes[position])) {
+		position++
+	}
+	if position == len(runes) {
+		return ""
+	}
+	return string(runes[position:])
+}
+
+func normalizeArabicLetter(letter rune) rune {
+	switch letter {
+	case 'أ', 'إ', 'آ', 'ٱ':
+		return 'ا'
+	case 'ى':
+		return 'ي'
+	default:
+		return letter
+	}
 }
 
 func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, output string) error {
