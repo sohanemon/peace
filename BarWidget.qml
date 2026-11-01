@@ -1,4 +1,5 @@
 import QtQuick
+import qs.Commons
 import qs.Ui
 
 BarWidget {
@@ -36,12 +37,18 @@ BarWidget {
   implicitHeight: barSize
   onBarChanged: injectPanel()
 
-  WidgetButton {
+  BarIconButton {
     id: buttonItem
     anchors.fill: parent
     bar: root.bar
-    text: "۞"
-    tooltipText: "Omapeace listening controls"
+    text: ""
+    iconComponent: Component {
+      SeljukStar {
+        starSize: Style.space(24)
+        iconColor: root.opened ? Color.accent : buttonItem.foreground
+      }
+    }
+    tooltipText: "Peace · Quran recitation"
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.LeftButton) root.toggle()
     }
