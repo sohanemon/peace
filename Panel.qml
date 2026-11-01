@@ -24,6 +24,9 @@ Panel {
   property bool followEnabled: false
   property bool randomBackground: false
   property bool advancedOptionsExpanded: false
+  property bool showTranslation: true
+  property bool showReference: true
+  property bool useThemeColors: false
   property string reciterID: "ar.alafasy"
   property int bufferSize: 10
   property int leadSize: 2
@@ -161,7 +164,7 @@ Panel {
       id: keyCatcher
 
       anchors.fill: parent
-      blocked: referenceInput.activeFocus || reciterInput.popupOpen || basmalaToggle.activeFocus || followToggle.activeFocus || randomBackgroundToggle.activeFocus
+      blocked: referenceInput.activeFocus || reciterInput.popupOpen || basmalaToggle.activeFocus || followToggle.activeFocus || randomBackgroundToggle.activeFocus || translationToggle.activeFocus || referenceToggle.activeFocus || themeColorsToggle.activeFocus
       onCloseRequested: root.close()
 
       Column {
@@ -320,6 +323,10 @@ Panel {
                   }
                   var args = ["listen", reference, "--reciter", root.reciterID]
                   args.push("--basmala=" + String(root.basmalaEnabled))
+                  args.push("--show-translation=" + String(root.showTranslation))
+                  args.push("--show-reference=" + String(root.showReference))
+                  if (root.useThemeColors)
+                    args.push("--use-theme")
                   if (root.followEnabled) {
                     args.push("--follow", "--buffer", String(root.bufferSize), "--lead", String(root.leadSize), "--jobs", String(root.workerCount))
                     if (root.randomBackground)
@@ -609,6 +616,51 @@ Panel {
                   borderSpec: Border.none()
                   Accessible.name: "Shuffle wallpaper backgrounds"
                   onClicked: root.randomBackground = !root.randomBackground
+                }
+
+                Toggle {
+                  id: translationToggle
+
+                  width: parent.width
+                  implicitHeight: Style.space(38)
+                  label: "Show translation"
+                  description: ""
+                  titleSize: Style.font.bodySmall
+                  checked: root.showTranslation
+                  color: translationToggle.activeFocus ? Style.focusFillFor(root.foreground, Color.accent) : "transparent"
+                  borderSpec: Border.none()
+                  Accessible.name: "Show ayah translation"
+                  onClicked: root.showTranslation = !root.showTranslation
+                }
+
+                Toggle {
+                  id: referenceToggle
+
+                  width: parent.width
+                  implicitHeight: Style.space(38)
+                  label: "Show reference"
+                  description: ""
+                  titleSize: Style.font.bodySmall
+                  checked: root.showReference
+                  color: referenceToggle.activeFocus ? Style.focusFillFor(root.foreground, Color.accent) : "transparent"
+                  borderSpec: Border.none()
+                  Accessible.name: "Show surah and ayah reference"
+                  onClicked: root.showReference = !root.showReference
+                }
+
+                Toggle {
+                  id: themeColorsToggle
+
+                  width: parent.width
+                  implicitHeight: Style.space(38)
+                  label: "Use theme colors"
+                  description: ""
+                  titleSize: Style.font.bodySmall
+                  checked: root.useThemeColors
+                  color: themeColorsToggle.activeFocus ? Style.focusFillFor(root.foreground, Color.accent) : "transparent"
+                  borderSpec: Border.none()
+                  Accessible.name: "Use active theme text colors"
+                  onClicked: root.useThemeColors = !root.useThemeColors
                 }
 
               }

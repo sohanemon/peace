@@ -79,19 +79,31 @@ type renderedText struct {
 }
 
 var colorPattern = regexp.MustCompile(`(?m)^([a-z_]+)\s*=\s*"(#[0-9A-Fa-f]{6})"`)
+var linearLuminance = func() [256]float64 {
+	var values [256]float64
+	for channel := range values {
+		value := float64(channel) / 255
+		if value <= 0.04045 {
+			values[channel] = value / 12.92
+		} else {
+			values[channel] = math.Pow((value+0.055)/1.055, 2.4)
+		}
+	}
+	return values
+}()
 var fontFaces struct {
 	sync.Once
 	Arabic, Serif, Sans *font.Face
 	err                 error
 }
 
-func (r Runtime) renderAyah(surah, ayah int, baseImage, output string, showBasmala bool) error {
+func (r Runtime) renderAyah(surah, ayah int, baseImage, output string, showBasmala, useTheme bool) error {
 	text, err := fetchAyahText(surah, ayah)
 	if err != nil {
 		return err
 	}
 	text.Arabic = displayAyahArabic(surah, ayah, text.Arabic, showBasmala)
-	return r.renderAyahText(surah, ayah, text, baseImage, output)
+	return r.renderAyahText(surah, ayah, text, baseImage, output, useTheme)
 }
 
 func displayAyahArabic(surah, ayah int, text string, showBasmala bool) string {
@@ -136,20 +148,28 @@ func normalizeArabicLetter(letter rune) rune {
 	}
 }
 
-func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, output string) error {
+func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, output string, useTheme bool) error {
 	if err := loadRenderFonts(); err != nil {
 		return err
 	}
 	colors := r.currentColors()
 	width, height := r.screenSize()
+	backdrop, err := loadBackdrop(baseImage, width, height, colors.Background)
+	if err != nil {
+		return fmt.Errorf("load wallpaper background: %w", err)
+	}
+	palette := themeTextPalette(colors)
+	if !useTheme {
+		palette = wallpaperTextPalette(backdrop, parseColor(colors.Accent))
+	}
 	textWidth := width * 78 / 100
 	maxHeight := height * 76 / 100
 	fontScale := min(width, height*16/9) * 100 / 2560
 	fontScale = min(150, max(60, fontScale))
 	styles := []textStyle{
-		{Text: text.Arabic, Size: 76 * fontScale / 100, Minimum: 24, Face: fontFaces.Arabic, Color: parseColor(colors.Accent), Direction: di.DirectionRTL, Script: language.Arabic},
-		{Text: trimEdgeQuote(text.English), Size: 38 * fontScale / 100, Minimum: 18, Face: fontFaces.Serif, Color: parseColor(colors.Foreground), Direction: di.DirectionLTR, Script: language.Latin},
-		{Text: text.Reference, Size: 18 * fontScale / 100, Minimum: 12, Face: fontFaces.Sans, Color: parseColor(colors.Muted), Direction: di.DirectionLTR, Script: language.Latin},
+		{Text: text.Arabic, Size: 76 * fontScale / 100, Minimum: 24, Face: fontFaces.Arabic, Color: palette.Arabic, Direction: di.DirectionRTL, Script: language.Arabic},
+		{Text: trimEdgeQuote(text.English), Size: 32 * fontScale / 100, Minimum: 16, Face: fontFaces.Serif, Color: palette.Translation, Direction: di.DirectionLTR, Script: language.Latin},
+		{Text: text.Reference, Size: 18 * fontScale / 100, Minimum: 12, Face: fontFaces.Sans, Color: palette.Reference, Direction: di.DirectionLTR, Script: language.Latin},
 	}
 	gap := max(18, height*5/100)
 	var rendered [3]renderedText
@@ -176,21 +196,35 @@ func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, outpu
 		}
 	}
 	stackHeight := gap*2 + rendered[0].Height + rendered[1].Height + rendered[2].Height
+	if !useTheme {
+		textY := 0
+		for i := range rendered {
+			targetContrast := 3.0
+			if i == 1 {
+				targetContrast = 4.5
+			}
+			left := (width - rendered[i].Width) / 2
+			top := (height-stackHeight)/2 + textY
+			styles[i].Color = adjustTextColor(backdrop, rendered[i].Image, left, top, styles[i].Color, targetContrast)
+			recolorText(rendered[i].Image, styles[i].Color)
+			textY += rendered[i].Height + gap
+		}
+	}
 	stack := image.NewRGBA(image.Rect(0, 0, textWidth, stackHeight))
 	y := 0
 	for i := range rendered {
 		draw.Draw(stack, image.Rect(0, y, textWidth, y+rendered[i].Height), rendered[i].Image, image.Point{}, draw.Over)
 		y += rendered[i].Height + gap
 	}
-	backdrop, err := loadBackdrop(baseImage, width, height, colors.Background)
-	if err != nil {
-		return fmt.Errorf("load wallpaper background: %w", err)
-	}
 	var outlineColors [3]color.NRGBA
 	var outlineNeeded [3]bool
 	textY := 0
 	outlineRadius := max(1, min(2, min(width, height)/1200))
 	for i := range rendered {
+		if i == 2 {
+			textY += rendered[i].Height + gap
+			continue
+		}
 		left := (width - rendered[i].Width) / 2
 		top := (height-stackHeight)/2 + textY
 		outlineColors[i], outlineNeeded[i] = adaptiveOutlineColor(backdrop, rendered[i].Image, left, top)
@@ -199,7 +233,7 @@ func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, outpu
 	shadowText(backdrop, stack, width/2, height/2)
 	textY = 0
 	for i := range rendered {
-		if outlineNeeded[i] {
+		if outlineNeeded[i] && i != 2 {
 			left := (width - rendered[i].Width) / 2
 			top := (height-stackHeight)/2 + textY
 			outline := outlineText(rendered[i].Image, outlineColors[i], outlineRadius)
@@ -478,14 +512,194 @@ func contrastRatio(first, second float64) float64 {
 }
 
 func relativeLuminance(red, green, blue uint8) float64 {
-	linear := func(channel uint8) float64 {
-		value := float64(channel) / 255
-		if value <= 0.04045 {
-			return value / 12.92
-		}
-		return math.Pow((value+0.055)/1.055, 2.4)
+	return 0.2126*linearLuminance[red] + 0.7152*linearLuminance[green] + 0.0722*linearLuminance[blue]
+}
+
+type textPalette struct {
+	Arabic      color.RGBA
+	Translation color.RGBA
+	Reference   color.RGBA
+}
+
+func themeTextPalette(colors themeColors) textPalette {
+	return textPalette{
+		Arabic:      parseColor(colors.Accent),
+		Translation: parseColor(colors.Foreground),
+		Reference:   parseColor(colors.Muted),
 	}
-	return 0.2126*linear(red) + 0.7152*linear(green) + 0.0722*linear(blue)
+}
+
+func wallpaperTextPalette(backdrop *image.RGBA, themeAccent color.RGBA) textPalette {
+	const hueBuckets = 24
+	var hueWeights [hueBuckets]float64
+	var hueSaturation [hueBuckets]float64
+	var totalLightness float64
+	var sampleCount int
+	width, height := backdrop.Bounds().Dx(), backdrop.Bounds().Dy()
+	for row := 0; row < 64; row++ {
+		y := row * height / 64
+		for column := 0; column < 64; column++ {
+			x := column * width / 64
+			pixel := backdrop.RGBAAt(x, y)
+			hue, saturation, lightness := rgbToHSL(pixel.R, pixel.G, pixel.B)
+			totalLightness += relativeLuminance(pixel.R, pixel.G, pixel.B)
+			sampleCount++
+			if saturation < 0.18 || lightness < 0.08 || lightness > 0.94 {
+				continue
+			}
+			bucket := int(hue / 15)
+			weight := saturation * (1 - math.Abs(lightness-0.55)*0.7)
+			hueWeights[bucket] += weight
+			hueSaturation[bucket] += saturation * weight
+		}
+	}
+	backgroundLightness := 0.5
+	if sampleCount > 0 {
+		backgroundLightness = totalLightness / float64(sampleCount)
+	}
+	bestBucket := -1
+	for bucket, weight := range hueWeights {
+		if bestBucket < 0 || weight > hueWeights[bestBucket] {
+			bestBucket = bucket
+		}
+	}
+	hue, saturation, _ := rgbToHSL(themeAccent.R, themeAccent.G, themeAccent.B)
+	if bestBucket >= 0 && hueWeights[bestBucket] > 0 {
+		hue = (float64(bestBucket) + 0.5) * 15
+		saturation = hueSaturation[bestBucket] / hueWeights[bestBucket]
+	}
+	saturation = min(0.9, max(0.65, saturation+0.18))
+	darkBackdrop := backgroundLightness < 0.45
+	accentLightness, foregroundLightness, referenceLightness := 0.34, 0.10, 0.29
+	if darkBackdrop {
+		accentLightness, foregroundLightness, referenceLightness = 0.74, 0.94, 0.63
+	}
+	return textPalette{
+		Arabic:      readablePaletteColor(hue, saturation, backgroundLightness, 3, accentLightness),
+		Translation: readablePaletteColor(hue, 0.08, backgroundLightness, 4.5, foregroundLightness),
+		Reference:   readablePaletteColor(hue, 0.2, backgroundLightness, 3, referenceLightness),
+	}
+}
+
+func readablePaletteColor(hue, saturation, backgroundLightness, targetContrast, preferredLightness float64) color.RGBA {
+	bestDistance := math.MaxFloat64
+	var best color.RGBA
+	for step := 1; step < 100; step++ {
+		lightness := float64(step) / 100
+		candidate := hslColor(hue, saturation, lightness)
+		if contrastRatio(relativeLuminance(candidate.R, candidate.G, candidate.B), backgroundLightness) < targetContrast {
+			continue
+		}
+		distance := math.Abs(lightness - preferredLightness)
+		if distance < bestDistance {
+			bestDistance, best = distance, candidate
+		}
+	}
+	if bestDistance < math.MaxFloat64 {
+		return best
+	}
+	black := hslColor(hue, saturation, 0.01)
+	white := hslColor(hue, saturation, 0.99)
+	if contrastRatio(relativeLuminance(black.R, black.G, black.B), backgroundLightness) > contrastRatio(relativeLuminance(white.R, white.G, white.B), backgroundLightness) {
+		return black
+	}
+	return white
+}
+
+func adjustTextColor(backdrop, text *image.RGBA, left, top int, current color.RGBA, targetContrast float64) color.RGBA {
+	var backgroundLightness float64
+	var samples int
+	for y := 0; y < text.Bounds().Dy(); y++ {
+		for x := 0; x < text.Bounds().Dx(); x++ {
+			if text.RGBAAt(x, y).A < 192 {
+				continue
+			}
+			point := image.Pt(left+x, top+y)
+			if point.In(backdrop.Bounds()) {
+				pixel := backdrop.RGBAAt(point.X, point.Y)
+				backgroundLightness += relativeLuminance(pixel.R, pixel.G, pixel.B)
+				samples++
+			}
+		}
+	}
+	if samples == 0 {
+		return current
+	}
+	backgroundLightness /= float64(samples)
+	if contrastRatio(relativeLuminance(current.R, current.G, current.B), backgroundLightness) >= targetContrast {
+		return current
+	}
+	hue, saturation, lightness := rgbToHSL(current.R, current.G, current.B)
+	return readablePaletteColor(hue, saturation, backgroundLightness, targetContrast, lightness)
+}
+
+func recolorText(text *image.RGBA, fill color.RGBA) {
+	for y := 0; y < text.Bounds().Dy(); y++ {
+		for x := 0; x < text.Bounds().Dx(); x++ {
+			alpha := text.RGBAAt(x, y).A
+			if alpha == 0 {
+				continue
+			}
+			text.SetRGBA(x, y, color.RGBA{
+				R: uint8(uint16(fill.R) * uint16(alpha) / 255),
+				G: uint8(uint16(fill.G) * uint16(alpha) / 255),
+				B: uint8(uint16(fill.B) * uint16(alpha) / 255),
+				A: alpha,
+			})
+		}
+	}
+}
+
+func rgbToHSL(red, green, blue uint8) (float64, float64, float64) {
+	r, g, b := float64(red)/255, float64(green)/255, float64(blue)/255
+	maximum, minimum := max(r, g, b), min(r, g, b)
+	delta := maximum - minimum
+	lightness := (maximum + minimum) / 2
+	if delta == 0 {
+		return 45, 0, lightness
+	}
+	saturation := delta / (1 - math.Abs(2*lightness-1))
+	hue := 0.0
+	switch maximum {
+	case r:
+		hue = math.Mod((g-b)/delta, 6)
+	case g:
+		hue = (b-r)/delta + 2
+	default:
+		hue = (r-g)/delta + 4
+	}
+	hue *= 60
+	if hue < 0 {
+		hue += 360
+	}
+	return hue, saturation, lightness
+}
+
+func hslColor(hue, saturation, lightness float64) color.RGBA {
+	chroma := (1 - math.Abs(2*lightness-1)) * saturation
+	secondary := chroma * (1 - math.Abs(math.Mod(hue/60, 2)-1))
+	red, green, blue := 0.0, 0.0, 0.0
+	switch {
+	case hue < 60:
+		red, green = chroma, secondary
+	case hue < 120:
+		red, green = secondary, chroma
+	case hue < 180:
+		green, blue = chroma, secondary
+	case hue < 240:
+		green, blue = secondary, chroma
+	case hue < 300:
+		red, blue = secondary, chroma
+	default:
+		red, blue = chroma, secondary
+	}
+	offset := lightness - chroma/2
+	return color.RGBA{
+		R: uint8(math.Round((red + offset) * 255)),
+		G: uint8(math.Round((green + offset) * 255)),
+		B: uint8(math.Round((blue + offset) * 255)),
+		A: 255,
+	}
 }
 
 func shadowText(backdrop, text *image.RGBA, centerX, centerY int) {

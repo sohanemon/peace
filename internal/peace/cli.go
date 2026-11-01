@@ -70,9 +70,10 @@ func newRootCommand(runtime Runtime) *cobra.Command {
 		short := map[string]string{"random": "Set a random ayah wallpaper", "next": "Show the next ayah wallpaper", "prev": "Show the previous ayah wallpaper"}[action]
 		cmd := &cobra.Command{Use: action, Short: short, Long: short + ".", Example: "  peace " + action, Args: noArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 			randomBackground, _ := cmd.Flags().GetBool("random")
-			return runtime.wallpaper(action, randomBackground)
+			useTheme, _ := cmd.Flags().GetBool("use-theme")
+			return runtime.wallpaper(action, randomBackground, useTheme)
 		}}
-		addWallpaperFlag(cmd)
+		addWallpaperFlags(cmd)
 		root.AddCommand(cmd)
 	}
 	root.AddCommand(&cobra.Command{Use: "__follow", Hidden: true, Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.follow() }})
@@ -135,8 +136,8 @@ func newListenCommand(runtime Runtime) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "listen SURAH[:AYAH|:START-END|:START-]",
 		Short:   "Play Quran recitation",
-		Long:    "Play one ayah, an ayah range, or the rest of a surah. Use --follow to update the wallpaper as playback advances. Use --basmala to show and play the introductory Basmala.",
-		Example: "  peace listen 2:255\n  peace listen 18:1-10 --reciter ar.alafasy\n  peace listen 110 --follow --random --basmala",
+		Long:    "Play one ayah, an ayah range, or the rest of a surah. Use --follow to update the wallpaper as playback advances. Use --use-theme to keep the active Omarchy text colors instead of adapting colors to each wallpaper.",
+		Example: "  peace listen 2:255\n  peace listen 18:1-10 --reciter ar.alafasy\n  peace listen 110 --follow --random\n  peace listen 110 --follow --use-theme",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
 				return &cliUsageError{err: errors.New("peace listen: ayah reference is required")}
@@ -170,6 +171,7 @@ func newListenCommand(runtime Runtime) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&options.Follow, "follow", false, "Update wallpaper as each ayah plays")
 	cmd.Flags().BoolVar(&options.Random, "random", false, "Shuffle backgrounds between ayahs (requires --follow)")
+	cmd.Flags().BoolVar(&options.UseTheme, "use-theme", false, "Use active Omarchy colors instead of wallpaper-adapted colors")
 	cmd.Flags().BoolVar(&options.Basmala, "basmala", false, "Show and play the introductory Basmala")
 	cmd.Flags().StringVar(&options.Reciter, "reciter", options.Reciter, "Reciter ID")
 	cmd.Flags().IntVar(&options.Buffer, "buffer", 10, "Upcoming ayahs to buffer (1-20)")
@@ -195,14 +197,16 @@ func newWallpaperCommand(runtime Runtime, use, short, example string) *cobra.Com
 				action = args[0]
 			}
 			randomBackground, _ := cmd.Flags().GetBool("random")
-			return runtime.wallpaper(action, randomBackground)
+			useTheme, _ := cmd.Flags().GetBool("use-theme")
+			return runtime.wallpaper(action, randomBackground, useTheme)
 		}}
-	addWallpaperFlag(cmd)
+	addWallpaperFlags(cmd)
 	return cmd
 }
 
-func addWallpaperFlag(cmd *cobra.Command) {
+func addWallpaperFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("random", false, "Choose a random current background")
+	cmd.Flags().Bool("use-theme", false, "Use active Omarchy colors instead of wallpaper-adapted colors")
 }
 
 func loadConfig() (Config, error) {

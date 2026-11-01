@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func (r Runtime) wallpaper(action string, randomBackground bool) error {
+func (r Runtime) wallpaper(action string, randomBackground, useTheme bool) error {
 	if r.pidAlive(r.followingFile()) {
 		fmt.Println("peace: follow is active; skipping wallpaper change")
 		return nil
@@ -35,7 +35,7 @@ func (r Runtime) wallpaper(action string, randomBackground bool) error {
 		return err
 	}
 	output := filepath.Join(outputDir, fmt.Sprintf("ayah-%d-%d.png", time.Now().UnixNano(), absoluteAyah))
-	if err := r.renderAyahText(surah, ayah, text, base, output); err != nil {
+	if err := r.renderAyahText(surah, ayah, text, base, output, useTheme); err != nil {
 		return err
 	}
 	cmd := exec.Command("omarchy", "theme", "bg", "set", output)

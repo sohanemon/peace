@@ -226,7 +226,7 @@ func (r Runtime) prepare(args []string) error {
 					renderBase = source
 				}
 			}
-			renderErr = r.renderFollowWallpaper(surah, ayah, renderBase, state.Basmala)
+			renderErr = r.renderFollowWallpaper(surah, ayah, renderBase, state.Basmala, state.UseTheme)
 			if renderErr == nil {
 				break
 			}
@@ -241,19 +241,19 @@ func (r Runtime) prepare(args []string) error {
 	return nil
 }
 
-func (r Runtime) prepareInitialWallpaper(surah, ayah int, baseImage string, basmala bool) error {
+func (r Runtime) prepareInitialWallpaper(surah, ayah int, baseImage string, basmala, useTheme bool) error {
 	cache := filepath.Join(r.Config.CacheDir, "follow")
 	if err := os.MkdirAll(cache, 0o700); err != nil {
 		return err
 	}
-	return r.renderFollowWallpaper(surah, ayah, baseImage, basmala)
+	return r.renderFollowWallpaper(surah, ayah, baseImage, basmala, useTheme)
 }
 
-func (r Runtime) renderFollowWallpaper(surah, ayah int, baseImage string, basmala bool) error {
+func (r Runtime) renderFollowWallpaper(surah, ayah int, baseImage string, basmala, useTheme bool) error {
 	cache := filepath.Join(r.Config.CacheDir, "follow")
 	image := followArtifact(cache, surah, ayah, ".png")
 	temp := image + ".tmp.png"
-	if err := r.renderAyah(surah, ayah, baseImage, temp, basmala); err != nil {
+	if err := r.renderAyah(surah, ayah, baseImage, temp, basmala, useTheme); err != nil {
 		_ = os.Remove(temp)
 		return err
 	}

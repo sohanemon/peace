@@ -19,6 +19,7 @@ type Options struct {
 	Reciter   string
 	Follow    bool
 	Random    bool
+	UseTheme  bool
 	Basmala   bool
 	Buffer    int
 	Lead      int
@@ -34,6 +35,7 @@ type PlayState struct {
 	Follow        bool     `json:"follow"`
 	Random        bool     `json:"random,omitempty"`
 	RandomSources []string `json:"random_sources,omitempty"`
+	UseTheme      bool     `json:"use_theme,omitempty"`
 	Basmala       bool     `json:"basmala"`
 	BaseImage     string   `json:"base_image,omitempty"`
 	AudioURLs     []string `json:"audio_urls,omitempty"`
