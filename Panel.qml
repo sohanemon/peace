@@ -243,7 +243,7 @@ Panel {
             Rectangle {
               anchors.fill: parent
               radius: Style.cornerRadius
-              color: Qt.rgba(Color.background.r, Color.background.g, Color.background.b, 0.18)
+              color: Qt.rgba(0, 0, 0, 0.46)
             }
 
             BorderSurface {

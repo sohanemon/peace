@@ -32,6 +32,8 @@ type PlayState struct {
 	End           int      `json:"end"`
 	Reciter       string   `json:"reciter"`
 	Follow        bool     `json:"follow"`
+	Random        bool     `json:"random,omitempty"`
+	RandomSources []string `json:"random_sources,omitempty"`
 	Basmala       bool     `json:"basmala"`
 	BaseImage     string   `json:"base_image,omitempty"`
 	AudioURLs     []string `json:"audio_urls,omitempty"`

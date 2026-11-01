@@ -36,7 +36,7 @@ omarchy plugin remove io.github.sohanemon.omapeace
     peace stop
     peace status
 
-Follow works with any active Omarchy theme. It starts audio immediately, then caches upcoming audio and renders upcoming ayah wallpapers in parallel within the configured buffer. If an audio cache is late, playback streams that ayah while caching continues. Wallpapers use the current background and active theme colors by default. Pass `--random` with `--follow` or `peace wallpaper --random` to choose a random background from the active theme, Peace theme, and bundled backgrounds. Audio text and recitation URLs come from AlQuran Cloud. Listening requires mpv.
+Follow works with any active Omarchy theme. It starts audio immediately, then caches upcoming audio and renders upcoming ayah wallpapers in parallel within the configured buffer. If an audio cache is late, playback streams that ayah while caching continues. Wallpapers use the current background and active theme colors by default. Pass `--random` with `--follow` to shuffle through the available active theme, Peace theme, and bundled backgrounds between ayahs. Use `peace wallpaper --random` to choose one random background for a manual wallpaper. Audio text and recitation URLs come from AlQuran Cloud. Listening requires mpv.
 
 The introductory Basmala is hidden and not played by default. Pass `--basmala` to show it on the first ayah wallpaper and play it before that ayah. `--basmala=false` explicitly keeps it hidden and silent.
 

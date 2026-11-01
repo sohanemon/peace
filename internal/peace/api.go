@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
@@ -60,12 +61,18 @@ func (r Runtime) listenOptions(o Options) error {
 	}
 	baseImage := ""
 	if o.Follow {
-		baseImage, err = r.snapshotBackground(o.Random)
+		baseImage, err = r.snapshotBackground(false)
 		if err != nil {
 			return fmt.Errorf("peace listen: snapshot current wallpaper: %w", err)
 		}
 	}
-	state := PlayState{Surah: surah, Start: start, End: end, Reciter: o.Reciter, Follow: o.Follow, Basmala: o.Basmala, BaseImage: baseImage, Preparing: o.Follow}
+	state := PlayState{Surah: surah, Start: start, End: end, Reciter: o.Reciter, Follow: o.Follow, Random: o.Random, Basmala: o.Basmala, BaseImage: baseImage, Preparing: o.Follow}
+	if o.Follow && o.Random {
+		state.RandomSources = r.backgroundCandidates()
+		rand.Shuffle(len(state.RandomSources), func(i, j int) {
+			state.RandomSources[i], state.RandomSources[j] = state.RandomSources[j], state.RandomSources[i]
+		})
+	}
 	if o.Follow {
 		state.AudioURLs, state.IntroAudioURL, state.Buffer, state.Lead, state.Jobs = urls, introURL, o.Buffer, o.Lead, o.Jobs
 		if err := os.MkdirAll(r.Config.StateDir, 0o700); err != nil {
@@ -74,7 +81,11 @@ func (r Runtime) listenOptions(o Options) error {
 		fmt.Println("Preparing first wallpapers…")
 		leadEnd := min(end, start+o.Lead-1)
 		for ayah := start; ayah <= leadEnd; ayah++ {
-			if err := r.prepareInitialWallpaper(surah, ayah, baseImage, o.Basmala); err != nil {
+			wallpaperBase := backgroundForAyah(state.RandomSources, start, ayah)
+			if wallpaperBase == "" {
+				wallpaperBase = baseImage
+			}
+			if err := r.prepareInitialWallpaper(surah, ayah, wallpaperBase, o.Basmala); err != nil {
 				if ayah == start {
 					return fmt.Errorf("peace listen: prepare first ayah wallpaper: %w", err)
 				}

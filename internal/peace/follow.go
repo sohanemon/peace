@@ -93,20 +93,7 @@ func (r Runtime) snapshotBackground(random bool) (string, error) {
 }
 
 func (r Runtime) fallbackBackground(random bool) string {
-	var candidates []string
-	seen := make(map[string]bool)
-	for _, directory := range r.backgroundDirectories() {
-		paths, _ := filepath.Glob(filepath.Join(directory, "*"))
-		for _, path := range paths {
-			if seen[path] || isTemporaryBackground(path) || !supportedBackground(path) {
-				continue
-			}
-			if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
-				candidates = append(candidates, path)
-				seen[path] = true
-			}
-		}
-	}
+	candidates := r.backgroundCandidates()
 	if len(candidates) == 0 {
 		return ""
 	}
@@ -114,6 +101,36 @@ func (r Runtime) fallbackBackground(random bool) string {
 		return candidates[rand.Intn(len(candidates))]
 	}
 	return candidates[0]
+}
+
+func (r Runtime) backgroundCandidates() []string {
+	var candidates []string
+	seen := make(map[string]bool)
+	for _, directory := range r.backgroundDirectories() {
+		paths, _ := filepath.Glob(filepath.Join(directory, "*"))
+		for _, path := range paths {
+			resolved, err := filepath.EvalSymlinks(path)
+			if err != nil {
+				continue
+			}
+			if seen[resolved] || isTemporaryBackground(path) || !supportedBackground(path) {
+				continue
+			}
+			if info, err := os.Stat(resolved); err == nil && info.Mode().IsRegular() && supportedBackground(resolved) {
+				candidates = append(candidates, resolved)
+				seen[resolved] = true
+			}
+		}
+	}
+	return candidates
+}
+
+func backgroundForAyah(sources []string, start, ayah int) string {
+	if len(sources) == 0 {
+		return ""
+	}
+	index := (ayah - start) % len(sources)
+	return sources[index]
 }
 
 func (r Runtime) backgroundDirectories() []string {
@@ -203,14 +220,16 @@ func (r Runtime) prepare(args []string) error {
 		renderErr = nil
 	} else {
 		for attempt := 1; attempt <= 2; attempt++ {
-			tempImage := image + ".tmp.png"
-			if renderErr = r.renderAyah(surah, ayah, state.BaseImage, tempImage, state.Basmala); renderErr == nil {
-				renderErr = os.Rename(tempImage, image)
-				if renderErr == nil {
-					break
+			renderBase := state.BaseImage
+			if state.Random {
+				if source := backgroundForAyah(state.RandomSources, state.Start, ayah); source != "" {
+					renderBase = source
 				}
 			}
-			_ = os.Remove(tempImage)
+			renderErr = r.renderFollowWallpaper(surah, ayah, renderBase, state.Basmala)
+			if renderErr == nil {
+				break
+			}
 		}
 	}
 	if renderErr != nil {
@@ -227,6 +246,11 @@ func (r Runtime) prepareInitialWallpaper(surah, ayah int, baseImage string, basm
 	if err := os.MkdirAll(cache, 0o700); err != nil {
 		return err
 	}
+	return r.renderFollowWallpaper(surah, ayah, baseImage, basmala)
+}
+
+func (r Runtime) renderFollowWallpaper(surah, ayah int, baseImage string, basmala bool) error {
+	cache := filepath.Join(r.Config.CacheDir, "follow")
 	image := followArtifact(cache, surah, ayah, ".png")
 	temp := image + ".tmp.png"
 	if err := r.renderAyah(surah, ayah, baseImage, temp, basmala); err != nil {
@@ -235,6 +259,10 @@ func (r Runtime) prepareInitialWallpaper(surah, ayah int, baseImage string, basm
 	}
 	if err := os.Rename(temp, image); err != nil {
 		_ = os.Remove(temp)
+		return err
+	}
+	if err := writeAtomic(followArtifact(cache, surah, ayah, ".base"), []byte(baseImage+"\n"), 0o600); err != nil {
+		_ = os.Remove(image)
 		return err
 	}
 	return nil
@@ -468,7 +496,10 @@ func (r Runtime) displayWallpaper(cache string, surah, ayah int) bool {
 	if os.WriteFile(background, data, 0o600) != nil {
 		return false
 	}
-	if baseSource, readErr := os.ReadFile(filepath.Join(cache, "base-source")); readErr == nil {
+	baseFile := followArtifact(cache, surah, ayah, ".base")
+	if baseSource, readErr := os.ReadFile(baseFile); readErr == nil {
+		_ = os.WriteFile(background+".base", baseSource, 0o600)
+	} else if baseSource, readErr := os.ReadFile(filepath.Join(cache, "base-source")); readErr == nil {
 		_ = os.WriteFile(background+".base", baseSource, 0o600)
 	}
 	cmd := exec.Command("omarchy", "theme", "bg", "set", background)

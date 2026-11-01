@@ -169,7 +169,7 @@ func newListenCommand(runtime Runtime) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&options.Follow, "follow", false, "Update wallpaper as each ayah plays")
-	cmd.Flags().BoolVar(&options.Random, "random", false, "Choose a random current background (requires --follow)")
+	cmd.Flags().BoolVar(&options.Random, "random", false, "Shuffle backgrounds between ayahs (requires --follow)")
 	cmd.Flags().BoolVar(&options.Basmala, "basmala", false, "Show and play the introductory Basmala")
 	cmd.Flags().StringVar(&options.Reciter, "reciter", options.Reciter, "Reciter ID")
 	cmd.Flags().IntVar(&options.Buffer, "buffer", 10, "Upcoming ayahs to buffer (1-20)")
