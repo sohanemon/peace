@@ -16,7 +16,6 @@ Panel {
   readonly property var barIdentity: hostWidget || root
   readonly property string peaceExecutable: decodeURIComponent(String(Qt.resolvedUrl("bin/peace")).replace(/^file:\/\//, ""))
   property string statusText: "Checking playback…"
-  property bool pauseRequested: false
   property bool artworkCaptured: false
   property bool artworkIsSessionBase: false
   property string artworkCandidate: ""
@@ -35,7 +34,7 @@ Panel {
   readonly property string currentBackgroundLink: homeDirectory + "/.local/state/omarchy/current/background"
   property string artworkPath: ""
   readonly property bool isPlaying: statusText.indexOf("playing") === 0
-  readonly property bool isPaused: isPlaying && pauseRequested
+  readonly property bool isPaused: isPlaying && statusText.indexOf(", paused") !== -1
   readonly property bool isPreparing: statusText.indexOf("preparing") === 0
   readonly property bool selectedReferenceIsPlaying: {
     var match = selectedReferenceMatch
@@ -284,10 +283,9 @@ Panel {
                   var reference = referenceInput.text.trim()
                   if (root.selectedReferenceIsPlaying) {
                     root.runPeace(["pause"])
-                    root.pauseRequested = !root.pauseRequested
+                    statusRefreshTimer.restart()
                     return
                   }
-                  root.pauseRequested = false
                   var args = ["listen", reference, "--reciter", root.reciterID]
                   args.push("--basmala=" + String(root.basmalaEnabled))
                   if (root.followEnabled) {
@@ -326,7 +324,6 @@ Panel {
               onClicked: {
                 root.runPeace(["stop"])
                 root.statusText = "not playing"
-                root.pauseRequested = false
               }
             }
 
@@ -617,8 +614,6 @@ Panel {
       onStreamFinished: {
         var value = String(text).trim()
         root.statusText = value || "not playing"
-        if (value.indexOf("playing") !== 0)
-          root.pauseRequested = false
         if (value.indexOf(", following") !== -1 && !root.artworkIsSessionBase && !sessionBaseArtworkProcess.running)
           sessionBaseArtworkProcess.running = true
 
@@ -640,6 +635,13 @@ Panel {
     interval: 1000
     repeat: true
     running: root.opened
+    onTriggered: root.refreshStatus()
+  }
+
+  Timer {
+    id: statusRefreshTimer
+
+    interval: 150
     onTriggered: root.refreshStatus()
   }
 

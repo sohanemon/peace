@@ -209,6 +209,9 @@ func (r Runtime) status() error {
 		ayah = state.End
 	}
 	line := fmt.Sprintf("playing %d:%d (reciter %s", state.Surah, ayah, state.Reciter)
+	if paused, pauseErr := r.property("pause"); pauseErr == nil && paused == true {
+		line += ", paused"
+	}
 	if state.Follow && r.pidAlive(r.supervisorFile()) {
 		line += ", following"
 	}
