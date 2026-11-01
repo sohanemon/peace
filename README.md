@@ -20,11 +20,11 @@ omarchy plugin remove io.github.sohanemon.omapeace
 
 ## Commands
 
-    peace listen SURAH[:AYAH|:START-END|:START-] [--basmala] [--follow] [--random] [--use-theme] [--reciter ID] [--buffer N] [--lead N] [--jobs N]
+    peace listen SURAH[:AYAH|:START-END|:START-] [--basmala] [--follow] [--random] [--use-theme] [--show-translation=false] [--show-reference=false] [--reciter ID] [--buffer N] [--lead N] [--jobs N]
     peace pause
     peace stop
     peace status
-    peace wallpaper [random|next|prev] [--random] [--use-theme]
+    peace wallpaper [random|next|prev] [--random] [--use-theme] [--show-translation=false] [--show-reference=false]
 
     peace listen 55
     peace listen 55:5-10 --follow --buffer 6 --lead 2 --jobs 2
@@ -36,7 +36,7 @@ omarchy plugin remove io.github.sohanemon.omapeace
     peace stop
     peace status
 
-Follow works with any active Omarchy theme. It starts audio immediately, then caches upcoming audio and renders upcoming ayah wallpapers in parallel within the configured buffer. If an audio cache is late, playback streams that ayah while caching continues. Text colors are adapted to each wallpaper by default; pass `--use-theme` to use the active Omarchy theme's text colors instead. Pass `--random` with `--follow` to shuffle through the available active theme, Peace theme, and bundled backgrounds between ayahs. Use `peace wallpaper --random` to choose one random background for a manual wallpaper. Audio text and recitation URLs come from AlQuran Cloud. Listening requires mpv.
+Follow works with any active Omarchy theme. It starts audio immediately, then caches upcoming audio and renders upcoming ayah wallpapers in parallel within the configured buffer. If an audio cache is late, playback streams that ayah while caching continues. Translation and reference text are visible by default and can be hidden with `--show-translation=false` and `--show-reference=false`. Text colors are adapted to each wallpaper by default; pass `--use-theme` to use the active Omarchy theme's text colors instead. Pass `--random` with `--follow` to shuffle through the available active theme, Peace theme, and bundled backgrounds between ayahs. Use `peace wallpaper --random` to choose one random background for a manual wallpaper. Audio text and recitation URLs come from AlQuran Cloud. Listening requires mpv.
 
 The introductory Basmala is hidden and not played by default. Pass `--basmala` to show it on the first ayah wallpaper and play it before that ayah. `--basmala=false` explicitly keeps it hidden and silent.
 

@@ -63,13 +63,15 @@ type themeColors struct {
 }
 
 type textStyle struct {
-	Text      string
-	Size      int
-	Minimum   int
-	Face      *font.Face
-	Color     color.RGBA
-	Direction di.Direction
-	Script    language.Script
+	Text           string
+	Size           int
+	Minimum        int
+	Face           *font.Face
+	Color          color.RGBA
+	TargetContrast float64
+	Outline        bool
+	Direction      di.Direction
+	Script         language.Script
 }
 
 type renderedText struct {
@@ -97,13 +99,13 @@ var fontFaces struct {
 	err                 error
 }
 
-func (r Runtime) renderAyah(surah, ayah int, baseImage, output string, showBasmala, useTheme bool) error {
+func (r Runtime) renderAyah(surah, ayah int, baseImage, output string, showBasmala bool, renderOptions RenderOptions) error {
 	text, err := fetchAyahText(surah, ayah)
 	if err != nil {
 		return err
 	}
 	text.Arabic = displayAyahArabic(surah, ayah, text.Arabic, showBasmala)
-	return r.renderAyahText(surah, ayah, text, baseImage, output, useTheme)
+	return r.renderAyahText(surah, ayah, text, baseImage, output, renderOptions)
 }
 
 func displayAyahArabic(surah, ayah int, text string, showBasmala bool) string {
@@ -148,7 +150,7 @@ func normalizeArabicLetter(letter rune) rune {
 	}
 }
 
-func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, output string, useTheme bool) error {
+func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, output string, renderOptions RenderOptions) error {
 	if err := loadRenderFonts(); err != nil {
 		return err
 	}
@@ -159,22 +161,34 @@ func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, outpu
 		return fmt.Errorf("load wallpaper background: %w", err)
 	}
 	palette := themeTextPalette(colors)
-	if !useTheme {
+	if !renderOptions.UseTheme {
 		palette = wallpaperTextPalette(backdrop, parseColor(colors.Accent))
 	}
 	textWidth := width * 78 / 100
 	maxHeight := height * 76 / 100
 	fontScale := min(width, height*16/9) * 100 / 2560
 	fontScale = min(150, max(60, fontScale))
-	styles := []textStyle{
-		{Text: text.Arabic, Size: 76 * fontScale / 100, Minimum: 24, Face: fontFaces.Arabic, Color: palette.Arabic, Direction: di.DirectionRTL, Script: language.Arabic},
-		{Text: trimEdgeQuote(text.English), Size: 32 * fontScale / 100, Minimum: 16, Face: fontFaces.Serif, Color: palette.Translation, Direction: di.DirectionLTR, Script: language.Latin},
-		{Text: text.Reference, Size: 18 * fontScale / 100, Minimum: 12, Face: fontFaces.Sans, Color: palette.Reference, Direction: di.DirectionLTR, Script: language.Latin},
+	styles := []textStyle{{
+		Text: text.Arabic, Size: 76 * fontScale / 100, Minimum: 24, Face: fontFaces.Arabic,
+		Color: palette.Arabic, TargetContrast: 3, Outline: true, Direction: di.DirectionRTL, Script: language.Arabic,
+	}}
+	if renderOptions.ShowTranslation {
+		styles = append(styles, textStyle{
+			Text: trimEdgeQuote(text.English), Size: 32 * fontScale / 100, Minimum: 16, Face: fontFaces.Serif,
+			Color: palette.Translation, TargetContrast: 4.5, Outline: true, Direction: di.DirectionLTR, Script: language.Latin,
+		})
+	}
+	if renderOptions.ShowReference {
+		styles = append(styles, textStyle{
+			Text: text.Reference, Size: 18 * fontScale / 100, Minimum: 12, Face: fontFaces.Sans,
+			Color: palette.Reference, TargetContrast: 3, Direction: di.DirectionLTR, Script: language.Latin,
+		})
 	}
 	gap := max(18, height*5/100)
-	var rendered [3]renderedText
+	rendered := make([]renderedText, len(styles))
+	stackHeight := 0
 	for attempt := 0; attempt < 18; attempt++ {
-		stackHeight := gap * 2
+		stackHeight = gap * 2
 		fits := true
 		for i := range styles {
 			var err error
@@ -195,17 +209,16 @@ func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, outpu
 			return fmt.Errorf("ayah %d:%d does not fit the display", surah, ayah)
 		}
 	}
-	stackHeight := gap*2 + rendered[0].Height + rendered[1].Height + rendered[2].Height
-	if !useTheme {
+	stackHeight = gap * 2
+	for _, block := range rendered {
+		stackHeight += block.Height
+	}
+	if !renderOptions.UseTheme {
 		textY := 0
 		for i := range rendered {
-			targetContrast := 3.0
-			if i == 1 {
-				targetContrast = 4.5
-			}
 			left := (width - rendered[i].Width) / 2
 			top := (height-stackHeight)/2 + textY
-			styles[i].Color = adjustTextColor(backdrop, rendered[i].Image, left, top, styles[i].Color, targetContrast)
+			styles[i].Color = adjustTextColor(backdrop, rendered[i].Image, left, top, styles[i].Color, styles[i].TargetContrast)
 			recolorText(rendered[i].Image, styles[i].Color)
 			textY += rendered[i].Height + gap
 		}
@@ -216,12 +229,12 @@ func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, outpu
 		draw.Draw(stack, image.Rect(0, y, textWidth, y+rendered[i].Height), rendered[i].Image, image.Point{}, draw.Over)
 		y += rendered[i].Height + gap
 	}
-	var outlineColors [3]color.NRGBA
-	var outlineNeeded [3]bool
+	outlineColors := make([]color.NRGBA, len(rendered))
+	outlineNeeded := make([]bool, len(rendered))
 	textY := 0
 	outlineRadius := max(1, min(2, min(width, height)/1200))
 	for i := range rendered {
-		if i == 2 {
+		if !styles[i].Outline {
 			textY += rendered[i].Height + gap
 			continue
 		}
@@ -233,7 +246,7 @@ func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, outpu
 	shadowText(backdrop, stack, width/2, height/2)
 	textY = 0
 	for i := range rendered {
-		if outlineNeeded[i] && i != 2 {
+		if outlineNeeded[i] {
 			left := (width - rendered[i].Width) / 2
 			top := (height-stackHeight)/2 + textY
 			outline := outlineText(rendered[i].Image, outlineColors[i], outlineRadius)

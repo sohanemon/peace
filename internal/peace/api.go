@@ -66,7 +66,7 @@ func (r Runtime) listenOptions(o Options) error {
 			return fmt.Errorf("peace listen: snapshot current wallpaper: %w", err)
 		}
 	}
-	state := PlayState{Surah: surah, Start: start, End: end, Reciter: o.Reciter, Follow: o.Follow, Random: o.Random, UseTheme: o.UseTheme, Basmala: o.Basmala, BaseImage: baseImage, Preparing: o.Follow}
+	state := PlayState{Surah: surah, Start: start, End: end, Reciter: o.Reciter, Follow: o.Follow, Random: o.Random, Render: o.Render, Basmala: o.Basmala, BaseImage: baseImage, Preparing: o.Follow}
 	if o.Follow && o.Random {
 		state.RandomSources = r.backgroundCandidates()
 		rand.Shuffle(len(state.RandomSources), func(i, j int) {
@@ -85,7 +85,7 @@ func (r Runtime) listenOptions(o Options) error {
 			if wallpaperBase == "" {
 				wallpaperBase = baseImage
 			}
-			if err := r.prepareInitialWallpaper(surah, ayah, wallpaperBase, o.Basmala, o.UseTheme); err != nil {
+			if err := r.prepareInitialWallpaper(surah, ayah, wallpaperBase, o.Basmala, o.Render); err != nil {
 				if ayah == start {
 					return fmt.Errorf("peace listen: prepare first ayah wallpaper: %w", err)
 				}

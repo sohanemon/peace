@@ -19,33 +19,39 @@ type Options struct {
 	Reciter   string
 	Follow    bool
 	Random    bool
-	UseTheme  bool
 	Basmala   bool
+	Render    RenderOptions
 	Buffer    int
 	Lead      int
 	Jobs      int
 }
 
+type RenderOptions struct {
+	UseTheme        bool `json:"use_theme,omitempty"`
+	ShowTranslation bool `json:"show_translation"`
+	ShowReference   bool `json:"show_reference"`
+}
+
 // PlayState represents the current playback state of a recitation session.
 type PlayState struct {
-	Surah         int      `json:"surah"`
-	Start         int      `json:"start"`
-	End           int      `json:"end"`
-	Reciter       string   `json:"reciter"`
-	Follow        bool     `json:"follow"`
-	Random        bool     `json:"random,omitempty"`
-	RandomSources []string `json:"random_sources,omitempty"`
-	UseTheme      bool     `json:"use_theme,omitempty"`
-	Basmala       bool     `json:"basmala"`
-	BaseImage     string   `json:"base_image,omitempty"`
-	AudioURLs     []string `json:"audio_urls,omitempty"`
-	IntroAudioURL string   `json:"intro_audio_url,omitempty"`
-	Buffer        int      `json:"buffer,omitempty"`
-	Lead          int      `json:"lead,omitempty"`
-	Jobs          int      `json:"jobs,omitempty"`
-	Preparing     bool     `json:"preparing"`
-	Ready         int      `json:"ready"`
-	Appended      int      `json:"appended"`
+	Surah         int           `json:"surah"`
+	Start         int           `json:"start"`
+	End           int           `json:"end"`
+	Reciter       string        `json:"reciter"`
+	Follow        bool          `json:"follow"`
+	Random        bool          `json:"random,omitempty"`
+	RandomSources []string      `json:"random_sources,omitempty"`
+	Render        RenderOptions `json:"render"`
+	Basmala       bool          `json:"basmala"`
+	BaseImage     string        `json:"base_image,omitempty"`
+	AudioURLs     []string      `json:"audio_urls,omitempty"`
+	IntroAudioURL string        `json:"intro_audio_url,omitempty"`
+	Buffer        int           `json:"buffer,omitempty"`
+	Lead          int           `json:"lead,omitempty"`
+	Jobs          int           `json:"jobs,omitempty"`
+	Preparing     bool          `json:"preparing"`
+	Ready         int           `json:"ready"`
+	Appended      int           `json:"appended"`
 }
 
 // APIResponse is the envelope returned by the Quran API.
