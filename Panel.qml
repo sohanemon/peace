@@ -16,8 +16,11 @@ Panel {
   readonly property var barIdentity: hostWidget || root
   readonly property string peaceExecutable: decodeURIComponent(String(Qt.resolvedUrl("bin/peace")).replace(/^file:\/\//, ""))
   property string statusText: "Checking playback…"
-  property string activeReference: ""
   property bool pauseRequested: false
+  property bool artworkCaptured: false
+  property bool artworkIsSessionBase: false
+  property string artworkCandidate: ""
+  property var pendingListenArgs: null
   property bool basmalaEnabled: false
   property bool followEnabled: false
   property bool randomBackground: false
@@ -34,6 +37,18 @@ Panel {
   readonly property bool isPlaying: statusText.indexOf("playing") === 0
   readonly property bool isPaused: isPlaying && pauseRequested
   readonly property bool isPreparing: statusText.indexOf("preparing") === 0
+  readonly property bool selectedReferenceIsPlaying: {
+    var match = selectedReferenceMatch
+    if (!isPlaying || !match || Number(match[1]) !== currentSurahNumber)
+      return false
+    if (!match[2])
+      return true
+    var start = Number(match[2])
+    if (referenceInput.text.indexOf("-") === -1)
+      return currentAyahNumber === start
+    var end = match[3] ? Number(match[3]) : 0
+    return currentAyahNumber >= start && (end === 0 || currentAyahNumber <= end)
+  }
   readonly property string playbackStatus: isPaused ? "Paused"
     : (isPlaying ? "Playing"
        : (isPreparing ? "Preparing"
@@ -59,7 +74,7 @@ Panel {
     "Al-Asr", "Al-Humazah", "Al-Fil", "Quraysh", "Al-Ma'un", "Al-Kawthar",
     "Al-Kafirun", "An-Nasr", "Al-Masad", "Al-Ikhlas", "Al-Falaq", "An-Nas"
   ]
-  readonly property var selectedReferenceMatch: String(referenceInput.text || "").trim().match(/^([0-9]+)(?::([0-9]+)(?:-[0-9]*)?)?$/)
+  readonly property var selectedReferenceMatch: String(referenceInput.text || "").trim().match(/^([0-9]+)(?::([0-9]+)(?:-([0-9]*))?)?$/)
   readonly property var liveReferenceMatch: String(statusText || "").match(/^playing ([0-9]+):([0-9]+)/)
   readonly property int currentSurahNumber: liveReferenceMatch ? Number(liveReferenceMatch[1]) : (selectedReferenceMatch ? Number(selectedReferenceMatch[1]) : 0)
   readonly property int currentAyahNumber: liveReferenceMatch ? Number(liveReferenceMatch[2]) : (selectedReferenceMatch && selectedReferenceMatch[2] ? Number(selectedReferenceMatch[2]) : 1)
@@ -68,6 +83,8 @@ Panel {
 
   function open() {
     root.controller.show()
+    root.artworkCaptured = false
+    root.artworkIsSessionBase = false
     refreshStatus()
     refreshArtwork()
   }
@@ -104,9 +121,30 @@ Panel {
   }
 
   function refreshArtwork() {
-    if (!artworkPathProcess.running)
+    if (!artworkCaptured && !artworkPathProcess.running && !baseArtworkProcess.running)
       artworkPathProcess.running = true
 
+  }
+
+  function captureArtworkForListen(args) {
+    root.pendingListenArgs = args
+    root.artworkCaptured = false
+    root.artworkIsSessionBase = false
+    root.artworkCandidate = ""
+    root.refreshArtwork()
+  }
+
+  function finishArtworkCapture(path) {
+    if (path !== "")
+      root.artworkPath = path
+    root.artworkCaptured = true
+    if (root.pendingListenArgs !== null) {
+      var args = root.pendingListenArgs
+      root.pendingListenArgs = null
+      root.artworkIsSessionBase = !root.followEnabled
+      root.runPeace(args)
+      statusTimer.start()
+    }
   }
 
   KeyboardPanel {
@@ -214,6 +252,95 @@ Panel {
               radius: Style.cornerRadius
               color: "transparent"
               borderSpec: Border.controlSpec("normal", root.foreground, Color.accent)
+            }
+
+            Row {
+              anchors.centerIn: parent
+              spacing: Style.space(18)
+
+              Button {
+                width: Style.space(42)
+                iconText: "󰒮"
+                iconSize: Style.font.icon
+                tooltipText: "Previous ayah"
+                Accessible.name: "Previous ayah"
+                bordered: true
+                enabled: root.isPlaying && !root.isPreparing
+                anchors.verticalCenter: parent.verticalCenter
+                onClicked: root.runPeace(["__track", "prev"])
+              }
+
+              Button {
+                width: Style.space(58)
+                height: width
+                radius: width / 2
+                iconText: root.isPlaying && !root.isPaused ? "󰏤" : "󰐊"
+                iconSize: Style.font.iconLarge
+                selected: true
+                enabled: !root.isPreparing && root.pendingListenArgs === null
+                tooltipText: root.isPlaying && !root.isPaused ? "Pause recitation" : (root.isPaused ? "Resume recitation" : "Play recitation")
+                Accessible.name: root.isPlaying && !root.isPaused ? "Pause recitation" : (root.isPaused ? "Resume recitation" : "Play recitation")
+                onClicked: {
+                  var reference = referenceInput.text.trim()
+                  if (root.selectedReferenceIsPlaying) {
+                    root.runPeace(["pause"])
+                    root.pauseRequested = !root.pauseRequested
+                    return
+                  }
+                  root.pauseRequested = false
+                  var args = ["listen", reference, "--reciter", root.reciterID]
+                  args.push("--basmala=" + String(root.basmalaEnabled))
+                  if (root.followEnabled) {
+                    args.push("--follow", "--buffer", String(root.bufferSize), "--lead", String(root.leadSize), "--jobs", String(root.workerCount))
+                    if (root.randomBackground)
+                      args.push("--random")
+                  }
+                  root.captureArtworkForListen(args)
+                }
+              }
+
+              Button {
+                width: Style.space(42)
+                iconText: "󰒭"
+                iconSize: Style.font.icon
+                tooltipText: "Next ayah"
+                Accessible.name: "Next ayah"
+                bordered: true
+                enabled: root.isPlaying && !root.isPreparing
+                anchors.verticalCenter: parent.verticalCenter
+                onClicked: root.runPeace(["__track", "next"])
+              }
+            }
+
+            Button {
+              anchors.left: parent.left
+              anchors.bottom: parent.bottom
+              anchors.margins: Style.space(10)
+              width: Style.space(36)
+              iconText: "󰓛"
+              iconSize: Style.font.icon
+              tooltipText: "Stop recitation"
+              Accessible.name: "Stop recitation"
+              bordered: true
+              enabled: root.isPlaying || root.isPreparing
+              onClicked: {
+                root.runPeace(["stop"])
+                root.statusText = "not playing"
+                root.pauseRequested = false
+              }
+            }
+
+            Button {
+              anchors.right: parent.right
+              anchors.bottom: parent.bottom
+              anchors.margins: Style.space(10)
+              width: Style.space(36)
+              iconText: "󰋩"
+              iconSize: Style.font.icon
+              tooltipText: "Show the next ayah wallpaper"
+              Accessible.name: "Show the next ayah wallpaper"
+              bordered: true
+              onClicked: root.runPeace(["wallpaper", "next"])
             }
 
           }
@@ -335,71 +462,6 @@ Panel {
 
           }
 
-          Row {
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: Style.space(18)
-
-            Button {
-              width: Style.space(42)
-              iconText: "󰓛"
-              iconSize: Style.font.icon
-              tooltipText: "Stop recitation"
-              Accessible.name: "Stop recitation"
-              bordered: true
-              anchors.verticalCenter: parent.verticalCenter
-              onClicked: {
-                root.runPeace(["stop"])
-                root.statusText = "not playing"
-                root.activeReference = ""
-                root.pauseRequested = false
-              }
-            }
-
-            Button {
-              width: Style.space(58)
-              height: width
-              radius: width / 2
-              iconText: root.isPlaying && !root.isPaused ? "󰏤" : "󰐊"
-              iconSize: Style.font.iconLarge
-              selected: true
-              enabled: !root.isPreparing
-              tooltipText: root.isPlaying && !root.isPaused ? "Pause recitation" : (root.isPaused ? "Resume recitation" : "Play recitation")
-              Accessible.name: root.isPlaying && !root.isPaused ? "Pause recitation" : (root.isPaused ? "Resume recitation" : "Play recitation")
-              onClicked: {
-                var reference = referenceInput.text.trim()
-                if (root.isPlaying && reference === root.activeReference) {
-                  root.runPeace(["pause"])
-                  root.pauseRequested = !root.pauseRequested
-                  return
-                }
-                root.activeReference = reference
-                root.pauseRequested = false
-                var args = ["listen", reference, "--reciter", root.reciterID]
-                args.push("--basmala=" + String(root.basmalaEnabled))
-                if (root.followEnabled) {
-                  args.push("--follow", "--buffer", String(root.bufferSize), "--lead", String(root.leadSize), "--jobs", String(root.workerCount))
-                  if (root.randomBackground)
-                    args.push("--random")
-
-                }
-                root.runPeace(args)
-                statusTimer.start()
-              }
-            }
-
-            Button {
-              width: Style.space(42)
-              iconText: "󰋩"
-              iconSize: Style.font.icon
-              tooltipText: "Show the next ayah wallpaper"
-              Accessible.name: "Show the next ayah wallpaper"
-              bordered: true
-              anchors.verticalCenter: parent.verticalCenter
-              onClicked: root.runPeace(["wallpaper", "next"])
-            }
-
-          }
-
           Toggle {
             id: followToggle
 
@@ -496,13 +558,49 @@ Panel {
 
     stdout: StdioCollector {
       onStreamFinished: {
-        var path = String(text || "").trim()
-        if (path !== root.artworkPath)
-          root.artworkPath = path
+        root.artworkCandidate = String(text || "").trim()
+        if (root.artworkCandidate !== "") {
+          baseArtworkProcess.running = true
+        } else {
+          root.finishArtworkCapture("")
+        }
 
       }
     }
 
+  }
+
+  Process {
+    id: baseArtworkProcess
+
+    command: ["cat", root.artworkCandidate + ".base"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var basePath = String(text || "").trim()
+        if (basePath !== "" && root.pendingListenArgs === null)
+          root.artworkIsSessionBase = true
+        root.finishArtworkCapture(basePath || root.artworkCandidate)
+      }
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0 && !root.artworkCaptured)
+        root.finishArtworkCapture(root.artworkCandidate)
+    }
+  }
+
+  Process {
+    id: sessionBaseArtworkProcess
+
+    command: ["cat", root.homeDirectory + "/.cache/peace/follow/base-source"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var path = String(text || "").trim()
+        if (path !== "") {
+          root.artworkPath = path
+          root.artworkIsSessionBase = true
+        }
+      }
+    }
   }
 
   Process {
@@ -521,9 +619,8 @@ Panel {
         root.statusText = value || "not playing"
         if (value.indexOf("playing") !== 0)
           root.pauseRequested = false
-        var match = value.match(/^playing ([0-9]+:[0-9]+)/)
-        if (match && root.activeReference === "")
-          root.activeReference = match[1]
+        if (value.indexOf(", following") !== -1 && !root.artworkIsSessionBase && !sessionBaseArtworkProcess.running)
+          sessionBaseArtworkProcess.running = true
 
       }
     }

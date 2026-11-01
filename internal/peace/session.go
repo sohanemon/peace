@@ -163,6 +163,23 @@ func (r Runtime) pause() error {
 	return nil
 }
 
+func (r Runtime) track(direction string) error {
+	if !r.mpvAlive() {
+		return errors.New("not playing")
+	}
+	if direction != "prev" && direction != "next" {
+		return fmt.Errorf("peace: unknown track direction %q", direction)
+	}
+	response, err := r.sendIPC(map[string]any{"command": []any{"playlist-" + direction, "weak"}})
+	if err != nil {
+		return fmt.Errorf("peace: skip to %s ayah: %w", direction, err)
+	}
+	if response["error"] != "success" {
+		return fmt.Errorf("peace: skip to %s ayah: %v", direction, response["error"])
+	}
+	return nil
+}
+
 func (r Runtime) status() error {
 	state, stateErr := r.readState()
 	if r.mpvAlive() && stateErr == nil && state.Preparing {

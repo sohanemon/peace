@@ -77,6 +77,7 @@ func newRootCommand(runtime Runtime) *cobra.Command {
 	}
 	root.AddCommand(&cobra.Command{Use: "__follow", Hidden: true, Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.follow() }})
 	root.AddCommand(&cobra.Command{Use: "__prepare SURAH AYAH", Hidden: true, Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, args []string) error { return runtime.prepare(args) }})
+	root.AddCommand(&cobra.Command{Use: "__track DIRECTION", Hidden: true, Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error { return runtime.track(args[0]) }})
 	return root
 }
 
