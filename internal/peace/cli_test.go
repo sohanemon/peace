@@ -17,7 +17,7 @@ func TestRootHelpListsCommands(t *testing.T) {
 		if err := executeRoot(cmd); err != nil {
 			t.Fatalf("execute root help with args %v: %v", args, err)
 		}
-		for _, command := range []string{"listen", "pause", "stop", "status", "wallpaper", "random", "next", "prev"} {
+		for _, command := range []string{"listen", "words", "reciters", "translations", "pause", "stop", "status", "wallpaper", "random", "next", "prev"} {
 			if !strings.Contains(stdout.String(), command) {
 				t.Errorf("root help missing %q:\n%s", command, stdout.String())
 			}
@@ -155,6 +155,45 @@ func TestRuntimeErrorDoesNotPrintUsage(t *testing.T) {
 	}
 	if strings.Contains(stderr.String(), "Usage:") {
 		t.Errorf("runtime error printed command usage: %s", stderr.String())
+	}
+}
+
+func TestWordsRejectsRangeAndWholeSurah(t *testing.T) {
+	for _, reference := range []string{"2", "2:255-260", "2:255-"} {
+		cmd := newRootCommand(Runtime{})
+		cmd.SetArgs([]string{"words", reference})
+		err := executeRoot(cmd)
+		if err == nil || !strings.Contains(err.Error(), "SURAH:AYAH") {
+			t.Errorf("words %q error = %v, want single-ayah format error", reference, err)
+		}
+	}
+}
+
+func TestWordsMissingReferenceShowsUsage(t *testing.T) {
+	cmd := newRootCommand(Runtime{})
+	cmd.SetArgs([]string{"words"})
+	err := executeRoot(cmd)
+	if err == nil || !strings.Contains(err.Error(), "reference") || !strings.Contains(err.Error(), "Usage:") {
+		t.Fatalf("words missing reference error = %v", err)
+	}
+}
+
+func TestLanguageMatches(t *testing.T) {
+	for _, test := range []struct {
+		value, filter string
+		want          bool
+	}{
+		{value: "english", filter: "", want: true},
+		{value: "english", filter: "en", want: true},
+		{value: "english", filter: "english", want: true},
+		{value: "arabic", filter: "ar", want: true},
+		{value: "urdu", filter: "ur", want: true},
+		{value: "english", filter: "ur", want: false},
+		{value: "urdu", filter: "english", want: false},
+	} {
+		if got := languageMatches(test.value, test.filter); got != test.want {
+			t.Errorf("languageMatches(%q, %q) = %t, want %t", test.value, test.filter, got, test.want)
+		}
 	}
 }
 

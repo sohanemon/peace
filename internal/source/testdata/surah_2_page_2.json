@@ -1,0 +1,35 @@
+{
+  "verses": [
+    {
+      "id": 11,
+      "verse_key": "2:4",
+      "text_uthmani": "وَٱلَّذِينَ يُؤْمِنُونَ بِمَا أُنزِلَ إِلَيْكَ وَمَا أُنزِلَ مِن قَبْلِكَ وَبِٱلْآخِرَةِ هُمْ يُوقِنُونَ",
+      "translations": [
+        {
+          "id": 20,
+          "resource_id": 20,
+          "text": "<p>And who believe in what has been revealed to you, [O Muhammad], and what was revealed before you, and of the Hereafter they are certain [in faith].</p>"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "verse_key": "2:5",
+      "text_uthmani": "أُو۟لَٰٓئِكَ عَلَىٰ هُدًى مِّن رَّبِّهِمْ ۖ وَأُو۟لَٰٓئِكَ هُمُ ٱلْمُفْلِحُونَ",
+      "translations": [
+        {
+          "id": 20,
+          "resource_id": 20,
+          "text": "<p>Those are upon [right] guidance from their Lord, and it is those who are the successful.</p>"
+        }
+      ]
+    }
+  ],
+  "pagination": {
+    "per_page": 3,
+    "current_page": 2,
+    "next_page": null,
+    "total_pages": 2,
+    "total_records": 5
+  }
+}
