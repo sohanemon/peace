@@ -83,11 +83,11 @@ type Options struct {
 	Fallback string
 }
 
-// New builds the source selected by name. An empty name selects alquran.cloud.
+// New builds the source selected by name. An empty name selects quran.com.
 func New(name string, options Options) (Library, error) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	if name == "" {
-		name = "alquran"
+		name = "quran"
 	}
 	if options.HTTP == nil {
 		options.HTTP = NewClient()
@@ -116,6 +116,8 @@ func New(name string, options Options) (Library, error) {
 
 func newProvider(name string, options Options) (Library, error) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "quran", "quran.com", "qurancom":
+		return newQuranCom(options), nil
 	case "alquran", "alquran.cloud", "alqurancloud":
 		return newAlQuranCloud(options), nil
 	default:

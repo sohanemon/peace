@@ -60,7 +60,7 @@ func newRootCommand(runtime Runtime) *cobra.Command {
 	}
 	root.SetFlagErrorFunc(suggestFlag)
 	root.CompletionOptions.DisableDefaultCmd = true
-	root.PersistentFlags().String("source", envOrDefault("PEACE_SOURCE", "alquran"), "Quran data source: quran or alquran")
+	root.PersistentFlags().String("source", envOrDefault("PEACE_SOURCE", "quran"), "Quran data source: quran or alquran")
 	root.PersistentFlags().String("fallback", envOrDefault("PEACE_FALLBACK_SOURCE", ""), "Optional fallback source used when the primary source fails")
 	root.PersistentFlags().String("translation", envOrDefault("PEACE_TRANSLATION", source.DefaultTranslation), "Translation ID (legacy AlQuran Cloud ID or Quran.com numeric ID)")
 
