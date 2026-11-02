@@ -3,12 +3,15 @@
 package peace
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -66,6 +69,9 @@ func newRootCommand(runtime Runtime) *cobra.Command {
 
 	listen := newListenCommand(runtime)
 	root.AddCommand(listen)
+	root.AddCommand(newWordsCommand(runtime))
+	root.AddCommand(newListCommand(runtime, "reciters", "List available reciters"))
+	root.AddCommand(newListCommand(runtime, "translations", "List available translations"))
 	root.AddCommand(&cobra.Command{Use: "pause", Short: "Pause or resume audio playback", Long: "Toggle pause on the current recitation.", Example: "  peace pause", Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.pause() }})
 	root.AddCommand(&cobra.Command{Use: "stop", Short: "Stop audio playback", Long: "Stop recitation and any pending wallpaper preparation.", Example: "  peace stop", Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.stop() }})
 	root.AddCommand(&cobra.Command{Use: "status", Short: "Show playback status", Long: "Show the current ayah and playback state.", Example: "  peace status", Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.status() }})
@@ -252,6 +258,121 @@ func envOrDefault(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func newWordsCommand(runtime Runtime) *cobra.Command {
+	return &cobra.Command{
+		Use:     "words SURAH:AYAH",
+		Short:   "Show word-by-word Arabic, transliteration, and meaning",
+		Long:    "Print each word of one ayah with its Arabic text, transliteration, and English meaning. Word-by-word data is available with --source quran.",
+		Example: "  peace words 2:255\n  peace words 2:255 --source quran",
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) != 1 {
+				return &cliUsageError{err: errors.New("peace words: ayah reference is required (example: peace words 2:255)")}
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			surah, ayah, err := parseSingleAyah(args[0])
+			if err != nil {
+				return &cliUsageError{err: err}
+			}
+			dataSource, err := runtime.library(flagString(cmd, "source"), flagString(cmd, "fallback"))
+			if err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			words, err := dataSource.Words(ctx, surah, ayah)
+			if err != nil {
+				return fmt.Errorf("peace words: %w", err)
+			}
+			output := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			_, _ = fmt.Fprintln(output, "#\tARABIC\tTRANSLITERATION\tENGLISH")
+			for index, word := range words {
+				_, _ = fmt.Fprintf(output, "%d\t%s\t%s\t%s\n", index+1, word.Arabic, word.Transliteration, word.Translation)
+			}
+			return output.Flush()
+		},
+	}
+}
+
+func parseSingleAyah(reference string) (int, int, error) {
+	surah, start, end, err := parseReference(reference)
+	if err != nil || end != start || start < 1 {
+		return 0, 0, fmt.Errorf("peace words: invalid reference %q (expected SURAH:AYAH; example: peace words 2:255)", reference)
+	}
+	return surah, start, nil
+}
+
+func newListCommand(runtime Runtime, name, short string) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     name,
+		Short:   short,
+		Long:    short + " from the selected source. Results are cached in the peace cache directory.",
+		Example: "  peace " + name + "\n  peace " + name + " --lang en",
+		Args:    noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			dataSource, err := runtime.library(flagString(cmd, "source"), flagString(cmd, "fallback"))
+			if err != nil {
+				return err
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			language := flagString(cmd, "lang")
+			output := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			_, _ = fmt.Fprintln(output, "ID\tNAME\tLANGUAGE")
+			switch name {
+			case "reciters":
+				reciters, listErr := dataSource.Reciters(ctx)
+				if listErr != nil {
+					return fmt.Errorf("peace reciters: %w", listErr)
+				}
+				for _, reciter := range reciters {
+					if languageMatches(reciter.Language, language) {
+						_, _ = fmt.Fprintf(output, "%s\t%s\t%s\n", reciter.ID, reciter.Name, reciter.Language)
+					}
+				}
+			case "translations":
+				translations, listErr := dataSource.Translations(ctx)
+				if listErr != nil {
+					return fmt.Errorf("peace translations: %w", listErr)
+				}
+				for _, translation := range translations {
+					if languageMatches(translation.Language, language) {
+						_, _ = fmt.Fprintf(output, "%s\t%s\t%s\n", translation.ID, translation.Name, translation.Language)
+					}
+				}
+			default:
+				return fmt.Errorf("peace: unknown list %q", name)
+			}
+			return output.Flush()
+		},
+	}
+	cmd.Flags().String("lang", "", "Filter by language (for example en, arabic, or urdu)")
+	return cmd
+}
+
+var languageNames = map[string]string{
+	"en": "english", "ar": "arabic", "ur": "urdu", "id": "indonesian", "fr": "french",
+	"tr": "turkish", "bn": "bengali", "ru": "russian", "es": "spanish", "de": "german",
+	"nl": "dutch", "pt": "portuguese", "hi": "hindi", "zh": "chinese", "ja": "japanese",
+	"ko": "korean", "th": "thai", "ms": "malay", "sw": "swahili", "ha": "hausa", "fa": "persian",
+}
+
+func languageMatches(value, filter string) bool {
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	if filter == "" {
+		return true
+	}
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == filter {
+		return true
+	}
+	if full, ok := languageNames[filter]; ok {
+		return strings.EqualFold(value, full)
+	}
+	return strings.HasPrefix(value, filter)
 }
 
 func loadConfig() (Config, error) {
