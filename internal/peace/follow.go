@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"io.github.sohanemon/peace/internal/source"
 )
 
 func (r Runtime) snapshotBackground(random bool) (string, error) {
@@ -210,6 +212,12 @@ func (r Runtime) prepare(args []string) error {
 	if err != nil {
 		return err
 	}
+	dataSource, err := r.library(state.Source, state.Fallback)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
 	cache := filepath.Join(r.Config.CacheDir, "follow")
 	if err := os.MkdirAll(cache, 0o700); err != nil {
 		return err
@@ -226,7 +234,10 @@ func (r Runtime) prepare(args []string) error {
 					renderBase = source
 				}
 			}
-			renderErr = r.renderFollowWallpaper(surah, ayah, renderBase, state.Basmala, state.Render)
+			renderErr = r.renderFollowWallpaper(ctx, wallpaperRequest{
+				Source: dataSource, Translation: state.Translation, Surah: surah, Ayah: ayah,
+				BaseImage: renderBase, Basmala: state.Basmala, Render: state.Render,
+			})
 			if renderErr == nil {
 				break
 			}
@@ -241,19 +252,29 @@ func (r Runtime) prepare(args []string) error {
 	return nil
 }
 
-func (r Runtime) prepareInitialWallpaper(surah, ayah int, baseImage string, basmala bool, renderOptions RenderOptions) error {
+type wallpaperRequest struct {
+	Source      source.Library
+	Translation string
+	Surah       int
+	Ayah        int
+	BaseImage   string
+	Basmala     bool
+	Render      RenderOptions
+}
+
+func (r Runtime) prepareInitialWallpaper(ctx context.Context, request wallpaperRequest) error {
 	cache := filepath.Join(r.Config.CacheDir, "follow")
 	if err := os.MkdirAll(cache, 0o700); err != nil {
 		return err
 	}
-	return r.renderFollowWallpaper(surah, ayah, baseImage, basmala, renderOptions)
+	return r.renderFollowWallpaper(ctx, request)
 }
 
-func (r Runtime) renderFollowWallpaper(surah, ayah int, baseImage string, basmala bool, renderOptions RenderOptions) error {
+func (r Runtime) renderFollowWallpaper(ctx context.Context, request wallpaperRequest) error {
 	cache := filepath.Join(r.Config.CacheDir, "follow")
-	image := followArtifact(cache, surah, ayah, ".png")
+	image := followArtifact(cache, request.Surah, request.Ayah, ".png")
 	temp := image + ".tmp.png"
-	if err := r.renderAyah(surah, ayah, baseImage, temp, basmala, renderOptions); err != nil {
+	if err := r.renderAyah(ctx, request.Source, request.Translation, request.Surah, request.Ayah, request.BaseImage, temp, request.Basmala, request.Render); err != nil {
 		_ = os.Remove(temp)
 		return err
 	}
@@ -261,7 +282,7 @@ func (r Runtime) renderFollowWallpaper(surah, ayah int, baseImage string, basmal
 		_ = os.Remove(temp)
 		return err
 	}
-	if err := writeAtomic(followArtifact(cache, surah, ayah, ".base"), []byte(baseImage+"\n"), 0o600); err != nil {
+	if err := writeAtomic(followArtifact(cache, request.Surah, request.Ayah, ".base"), []byte(request.BaseImage+"\n"), 0o600); err != nil {
 		_ = os.Remove(image)
 		return err
 	}

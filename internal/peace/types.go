@@ -1,9 +1,5 @@
 package peace
 
-import (
-	"encoding/json"
-)
-
 // Config holds the runtime configuration for the peace application.
 type Config struct {
 	Home      string
@@ -15,15 +11,18 @@ type Config struct {
 
 // Options holds the configurable options for the listen command.
 type Options struct {
-	Reference string
-	Reciter   string
-	Follow    bool
-	Random    bool
-	Basmala   bool
-	Render    RenderOptions
-	Buffer    int
-	Lead      int
-	Jobs      int
+	Reference   string
+	Reciter     string
+	Source      string
+	Fallback    string
+	Translation string
+	Follow      bool
+	Random      bool
+	Basmala     bool
+	Render      RenderOptions
+	Buffer      int
+	Lead        int
+	Jobs        int
 }
 
 type RenderOptions struct {
@@ -38,6 +37,9 @@ type PlayState struct {
 	Start         int           `json:"start"`
 	End           int           `json:"end"`
 	Reciter       string        `json:"reciter"`
+	Source        string        `json:"source"`
+	Fallback      string        `json:"fallback,omitempty"`
+	Translation   string        `json:"translation"`
 	Follow        bool          `json:"follow"`
 	Random        bool          `json:"random,omitempty"`
 	RandomSources []string      `json:"random_sources,omitempty"`
@@ -52,25 +54,6 @@ type PlayState struct {
 	Preparing     bool          `json:"preparing"`
 	Ready         int           `json:"ready"`
 	Appended      int           `json:"appended"`
-}
-
-// APIResponse is the envelope returned by the Quran API.
-type APIResponse struct {
-	Data json.RawMessage `json:"data"`
-}
-
-// Surah describes a single surah from the Quran API.
-type Surah struct {
-	Number        int `json:"number"`
-	NumberOfAyahs int `json:"numberOfAyahs"`
-}
-
-// SurahAudio groups the audio URLs for the ayahs of a surah.
-type SurahAudio struct {
-	Ayahs []struct {
-		NumberInSurah int    `json:"numberInSurah"`
-		Audio         string `json:"audio"`
-	} `json:"ayahs"`
 }
 
 // Runtime ties configuration to the running peace instance.

@@ -11,22 +11,39 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"io.github.sohanemon/peace/internal/source"
 )
 
-func (r Runtime) wallpaper(action string, randomBackground bool, renderOptions RenderOptions) error {
+type wallpaperOptions struct {
+	Action      string
+	Random      bool
+	Source      string
+	Fallback    string
+	Translation string
+	Render      RenderOptions
+}
+
+func (r Runtime) wallpaper(options wallpaperOptions) error {
 	if r.pidAlive(r.followingFile()) {
 		fmt.Println("peace: follow is active; skipping wallpaper change")
 		return nil
 	}
-	absoluteAyah, err := r.chooseWallpaperAyah(action)
+	absoluteAyah, err := r.chooseWallpaperAyah(options.Action)
 	if err != nil {
 		return err
 	}
-	surah, ayah, text, err := fetchAyahByAbsolute(absoluteAyah)
+	dataSource, err := r.library(options.Source, options.Fallback)
 	if err != nil {
 		return err
 	}
-	base, err := r.snapshotBackground(randomBackground)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	surah, ayah, text, err := fetchAyahByAbsolute(ctx, dataSource, absoluteAyah, options.Translation)
+	if err != nil {
+		return err
+	}
+	base, err := r.snapshotBackground(options.Random)
 	if err != nil {
 		return err
 	}
@@ -35,7 +52,7 @@ func (r Runtime) wallpaper(action string, randomBackground bool, renderOptions R
 		return err
 	}
 	output := filepath.Join(outputDir, fmt.Sprintf("ayah-%d-%d.png", time.Now().UnixNano(), absoluteAyah))
-	if err := r.renderAyahText(surah, ayah, text, base, output, renderOptions); err != nil {
+	if err := r.renderAyahText(surah, ayah, text, base, output, options.Render); err != nil {
 		return err
 	}
 	cmd := exec.Command("omarchy", "theme", "bg", "set", output)
@@ -74,22 +91,23 @@ func (r Runtime) chooseWallpaperAyah(action string) (int, error) {
 	}
 }
 
-func fetchAyahByAbsolute(number int) (int, int, ayahText, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	url := fmt.Sprintf("https://api.alquran.cloud/v1/ayah/%d/editions/quran-uthmani,en.sahih", number)
-	data, err := fetchAyahEditions(ctx, url)
+func fetchAyahByAbsolute(ctx context.Context, dataSource source.Library, number int, translation string) (int, int, ayahText, error) {
+	chapters, err := dataSource.Chapters(ctx)
 	if err != nil {
 		return 0, 0, ayahText{}, err
 	}
-	surah := data[0].Surah.Number
-	ayah := data[0].NumberInSurah
-	text := ayahText{
-		Arabic:    data[0].Text,
-		English:   data[1].Text,
-		Reference: fmt.Sprintf("%s %d:%d", data[0].Surah.EnglishName, surah, ayah),
+	remaining := number
+	for _, chapter := range chapters {
+		if remaining <= chapter.Verses {
+			text, textErr := fetchAyahText(ctx, dataSource, chapter.Number, remaining, translation)
+			if textErr != nil {
+				return 0, 0, ayahText{}, textErr
+			}
+			return chapter.Number, remaining, text, nil
+		}
+		remaining -= chapter.Verses
 	}
-	return surah, ayah, text, nil
+	return 0, 0, ayahText{}, fmt.Errorf("ayah number %d is out of range", number)
 }
 
 func (r Runtime) wallpaperStateFile() string {

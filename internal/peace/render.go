@@ -20,7 +20,6 @@ import (
 	"regexp"
 	"strings"
 	"sync"
-	"time"
 	"unicode"
 
 	"github.com/go-text/typesetting/di"
@@ -38,16 +37,8 @@ import (
 	"golang.org/x/image/webp"
 
 	"io.github.sohanemon/peace/assets"
+	"io.github.sohanemon/peace/internal/source"
 )
-
-type ayahEdition struct {
-	Text  string `json:"text"`
-	Surah struct {
-		EnglishName string `json:"englishName"`
-		Number      int    `json:"number"`
-	} `json:"surah"`
-	NumberInSurah int `json:"numberInSurah"`
-}
 
 type ayahText struct {
 	Arabic    string
@@ -99,8 +90,8 @@ var fontFaces struct {
 	err                 error
 }
 
-func (r Runtime) renderAyah(surah, ayah int, baseImage, output string, showBasmala bool, renderOptions RenderOptions) error {
-	text, err := fetchAyahText(surah, ayah)
+func (r Runtime) renderAyah(ctx context.Context, dataSource source.Library, translation string, surah, ayah int, baseImage, output string, showBasmala bool, renderOptions RenderOptions) error {
+	text, err := fetchAyahText(ctx, dataSource, surah, ayah, translation)
 	if err != nil {
 		return err
 	}
@@ -793,32 +784,22 @@ func abs(value int) int {
 	return value
 }
 
-func fetchAyahText(surah, ayah int) (ayahText, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	url := fmt.Sprintf("https://api.alquran.cloud/v1/ayah/%d:%d/editions/quran-uthmani,en.sahih", surah, ayah)
-	data, err := fetchAyahEditions(ctx, url)
+func fetchAyahText(ctx context.Context, dataSource source.Library, surah, ayah int, translation string) (ayahText, error) {
+	ayahs, err := dataSource.Surah(ctx, surah, translation)
 	if err != nil {
 		return ayahText{}, err
 	}
-	return ayahText{
-		Arabic:    data[0].Text,
-		English:   data[1].Text,
-		Reference: fmt.Sprintf("%s %d:%d", data[0].Surah.EnglishName, surah, data[0].NumberInSurah),
-	}, nil
-}
-
-func fetchAyahEditions(ctx context.Context, url string) ([]ayahEdition, error) {
-	var response struct {
-		Data []ayahEdition `json:"data"`
+	for _, entry := range ayahs {
+		if entry.Number != ayah {
+			continue
+		}
+		reference := fmt.Sprintf("%s %d:%d", entry.SurahName, surah, entry.Number)
+		if entry.SurahName == "" {
+			reference = fmt.Sprintf("%d:%d", surah, entry.Number)
+		}
+		return ayahText{Arabic: entry.Arabic, English: entry.Translation, Reference: reference}, nil
 	}
-	if err := getJSON(ctx, url, &response); err != nil {
-		return nil, err
-	}
-	if len(response.Data) != 2 {
-		return nil, fmt.Errorf("ayah text is incomplete")
-	}
-	return response.Data, nil
+	return ayahText{}, fmt.Errorf("ayah %d:%d is unavailable", surah, ayah)
 }
 
 func (r Runtime) currentColors() themeColors {

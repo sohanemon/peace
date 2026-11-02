@@ -12,6 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	"io.github.sohanemon/peace/internal/source"
 )
 
 // Run parses argv and dispatches to the appropriate command handler.
@@ -58,6 +60,9 @@ func newRootCommand(runtime Runtime) *cobra.Command {
 	}
 	root.SetFlagErrorFunc(suggestFlag)
 	root.CompletionOptions.DisableDefaultCmd = true
+	root.PersistentFlags().String("source", envOrDefault("PEACE_SOURCE", "alquran"), "Quran data source: quran or alquran")
+	root.PersistentFlags().String("fallback", envOrDefault("PEACE_FALLBACK_SOURCE", ""), "Optional fallback source used when the primary source fails")
+	root.PersistentFlags().String("translation", envOrDefault("PEACE_TRANSLATION", source.DefaultTranslation), "Translation ID (legacy AlQuran Cloud ID or Quran.com numeric ID)")
 
 	listen := newListenCommand(runtime)
 	root.AddCommand(listen)
@@ -69,8 +74,10 @@ func newRootCommand(runtime Runtime) *cobra.Command {
 		action := action
 		short := map[string]string{"random": "Set a random ayah wallpaper", "next": "Show the next ayah wallpaper", "prev": "Show the previous ayah wallpaper"}[action]
 		cmd := &cobra.Command{Use: action, Short: short, Long: short + ".", Example: "  peace " + action, Args: noArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-			randomBackground, _ := cmd.Flags().GetBool("random")
-			return runtime.wallpaper(action, randomBackground, wallpaperRenderOptions(cmd))
+			return runtime.wallpaper(wallpaperOptions{
+				Action: action, Random: flagBool(cmd, "random"), Source: flagString(cmd, "source"),
+				Fallback: flagString(cmd, "fallback"), Translation: flagString(cmd, "translation"), Render: wallpaperRenderOptions(cmd),
+			})
 		}}
 		addWallpaperFlags(cmd)
 		root.AddCommand(cmd)
@@ -149,7 +156,7 @@ func newListenCommand(runtime Runtime) *cobra.Command {
 			}
 			return nil
 		},
-		PreRunE: func(_ *cobra.Command, _ []string) error {
+		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			for _, pair := range []struct {
 				name            string
 				value, min, max int
@@ -161,13 +168,19 @@ func newListenCommand(runtime Runtime) *cobra.Command {
 			if !safeID(options.Reciter) {
 				return &cliUsageError{err: errors.New("peace listen: invalid reciter ID (example: --reciter ar.alafasy)")}
 			}
+			if translation := flagString(cmd, "translation"); !safeID(translation) {
+				return &cliUsageError{err: errors.New("peace listen: invalid translation ID (example: --translation en.sahih)")}
+			}
 			if options.Random && !options.Follow {
 				return &cliUsageError{err: errors.New("peace listen: --random requires --follow (example: peace listen 110 --follow --random)")}
 			}
 			return nil
 		},
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			options.Reference = args[0]
+			options.Source = flagString(cmd, "source")
+			options.Fallback = flagString(cmd, "fallback")
+			options.Translation = flagString(cmd, "translation")
 			return runtime.listenOptions(options)
 		},
 	}
@@ -200,8 +213,10 @@ func newWallpaperCommand(runtime Runtime, use, short, example string) *cobra.Com
 			if len(args) == 1 {
 				action = args[0]
 			}
-			randomBackground, _ := cmd.Flags().GetBool("random")
-			return runtime.wallpaper(action, randomBackground, wallpaperRenderOptions(cmd))
+			return runtime.wallpaper(wallpaperOptions{
+				Action: action, Random: flagBool(cmd, "random"), Source: flagString(cmd, "source"),
+				Fallback: flagString(cmd, "fallback"), Translation: flagString(cmd, "translation"), Render: wallpaperRenderOptions(cmd),
+			})
 		}}
 	addWallpaperFlags(cmd)
 	return cmd
@@ -215,10 +230,28 @@ func addWallpaperFlags(cmd *cobra.Command) {
 }
 
 func wallpaperRenderOptions(cmd *cobra.Command) RenderOptions {
-	useTheme, _ := cmd.Flags().GetBool("use-theme")
-	showTranslation, _ := cmd.Flags().GetBool("show-translation")
-	showReference, _ := cmd.Flags().GetBool("show-reference")
-	return RenderOptions{UseTheme: useTheme, ShowTranslation: showTranslation, ShowReference: showReference}
+	return RenderOptions{
+		UseTheme:        flagBool(cmd, "use-theme"),
+		ShowTranslation: flagBool(cmd, "show-translation"),
+		ShowReference:   flagBool(cmd, "show-reference"),
+	}
+}
+
+func flagString(cmd *cobra.Command, name string) string {
+	value, _ := cmd.Flags().GetString(name)
+	return value
+}
+
+func flagBool(cmd *cobra.Command, name string) bool {
+	value, _ := cmd.Flags().GetBool(name)
+	return value
+}
+
+func envOrDefault(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
 }
 
 func loadConfig() (Config, error) {
