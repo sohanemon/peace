@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"io.github.sohanemon/peace/internal/source"
+	"io.github.sohanemon/peace/internal/quran"
 )
 
 func (r Runtime) snapshotBackground(random bool) (string, error) {
@@ -212,10 +212,7 @@ func (r Runtime) prepare(args []string) error {
 	if err != nil {
 		return err
 	}
-	dataSource, err := r.library(state.Source, state.Fallback)
-	if err != nil {
-		return err
-	}
+	client := quran.New(r.Config.CacheDir)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	cache := filepath.Join(r.Config.CacheDir, "follow")
@@ -235,7 +232,7 @@ func (r Runtime) prepare(args []string) error {
 				}
 			}
 			renderErr = r.renderFollowWallpaper(ctx, wallpaperRequest{
-				Source: dataSource, Translation: state.Translation, Surah: surah, Ayah: ayah,
+				Client: client, Translation: state.Translation, Surah: surah, Ayah: ayah,
 				BaseImage: renderBase, Basmala: state.Basmala, Render: state.Render,
 			})
 			if renderErr == nil {
@@ -253,7 +250,7 @@ func (r Runtime) prepare(args []string) error {
 }
 
 type wallpaperRequest struct {
-	Source      source.Library
+	Client      *quran.Client
 	Translation string
 	Surah       int
 	Ayah        int
@@ -274,7 +271,7 @@ func (r Runtime) renderFollowWallpaper(ctx context.Context, request wallpaperReq
 	cache := filepath.Join(r.Config.CacheDir, "follow")
 	image := followArtifact(cache, request.Surah, request.Ayah, ".png")
 	temp := image + ".tmp.png"
-	if err := r.renderAyah(ctx, request.Source, request.Translation, request.Surah, request.Ayah, request.BaseImage, temp, request.Basmala, request.Render); err != nil {
+	if err := r.renderAyah(ctx, request.Client, request.Translation, request.Surah, request.Ayah, request.BaseImage, temp, request.Basmala, request.Render); err != nil {
 		_ = os.Remove(temp)
 		return err
 	}
@@ -289,33 +286,6 @@ func (r Runtime) renderFollowWallpaper(ctx context.Context, request wallpaperReq
 	return nil
 }
 
-func downloadFile(url, destination string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	response, err := openURL(ctx, url)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = response.Body.Close()
-	}()
-	file, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	_, copyErr := io.Copy(file, response.Body)
-	closeErr := file.Close()
-	if copyErr != nil {
-		_ = os.Remove(destination)
-		return copyErr
-	}
-	if closeErr != nil {
-		_ = os.Remove(destination)
-		return closeErr
-	}
-	return nil
-}
-
 func (r Runtime) follow() error {
 	state, err := r.readState()
 	if err != nil {
@@ -324,6 +294,7 @@ func (r Runtime) follow() error {
 	if err := os.MkdirAll(filepath.Join(r.Config.CacheDir, "follow"), 0o700); err != nil {
 		return err
 	}
+	client := quran.New(r.Config.CacheDir)
 	pidText := strconv.Itoa(os.Getpid()) + "\n"
 	_ = os.WriteFile(r.followingFile(), []byte(pidText), 0o600)
 	_ = os.WriteFile(r.supervisorFile(), []byte(pidText), 0o600)
@@ -424,7 +395,7 @@ func (r Runtime) follow() error {
 			}
 			audioJobs[ayah] = true
 			activeAudio++
-			go r.prefetchAudio(state.Surah, ayah, state.AudioURLs[ayah-state.Start], audioDone)
+			go r.prefetchAudio(client, state.Surah, ayah, state.AudioURLs[ayah-state.Start], audioDone)
 		}
 		for ayah := window.imageStart; ayah <= window.imageEnd && active < limit; ayah++ {
 			if _, exists := prep[ayah]; exists {
@@ -452,14 +423,16 @@ func (r Runtime) follow() error {
 	return nil
 }
 
-func (r Runtime) prefetchAudio(surah, ayah int, url string, done chan<- int) {
+func (r Runtime) prefetchAudio(client *quran.Client, surah, ayah int, url string, done chan<- int) {
 	defer func() { done <- ayah }()
 	cache := filepath.Join(r.Config.CacheDir, "follow")
 	audio := followArtifact(cache, surah, ayah, ".mp3")
 	marker := followArtifact(cache, surah, ayah, ".audio-fail")
 	var err error
 	for attempt := 0; attempt < 2; attempt++ {
-		err = downloadFile(url, audio+".tmp")
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		err = client.Download(ctx, url, audio+".tmp")
+		cancel()
 		if err == nil {
 			err = os.Rename(audio+".tmp", audio)
 		}

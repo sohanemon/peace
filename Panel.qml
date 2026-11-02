@@ -27,7 +27,7 @@ Panel {
   property bool showTranslation: true
   property bool showReference: true
   property bool useThemeColors: false
-  property string reciterID: "ar.alafasy"
+  property string reciterID: "7"
   property int bufferSize: 10
   property int leadSize: 2
   property int workerCount: 2
@@ -81,7 +81,7 @@ Panel {
   readonly property int currentSurahNumber: liveReferenceMatch ? Number(liveReferenceMatch[1]) : (selectedReferenceMatch ? Number(selectedReferenceMatch[1]) : 0)
   readonly property int currentAyahNumber: liveReferenceMatch ? Number(liveReferenceMatch[2]) : (selectedReferenceMatch && selectedReferenceMatch[2] ? Number(selectedReferenceMatch[2]) : 1)
   readonly property string currentSurahName: currentSurahNumber > 0 ? (surahNames[currentSurahNumber - 1] || "Surah " + currentSurahNumber) : "Choose a Surah"
-  readonly property string reciterName: reciterID === "ar.husary" ? "Mahmoud Al-Husary" : "Mishary Alafasy"
+  readonly property string reciterName: reciterID === "6" ? "Mahmoud Al-Husary" : "Mishary Alafasy"
 
   function open() {
     root.controller.show()
@@ -471,10 +471,10 @@ Panel {
                 fontFamily: root.fontFamily
                 Accessible.name: "Reciter"
                 options: [{
-                  "value": "ar.alafasy",
+                  "value": "7",
                   "label": "Mishary Alafasy"
                 }, {
-                  "value": "ar.husary",
+                  "value": "6",
                   "label": "Mahmoud Al-Husary"
                 }]
                 onChanged: function(value) {

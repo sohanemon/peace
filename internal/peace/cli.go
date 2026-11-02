@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"io.github.sohanemon/peace/internal/source"
+	"io.github.sohanemon/peace/internal/quran"
 )
 
 // Run parses argv and dispatches to the appropriate command handler.
@@ -63,9 +63,7 @@ func newRootCommand(runtime Runtime) *cobra.Command {
 	}
 	root.SetFlagErrorFunc(suggestFlag)
 	root.CompletionOptions.DisableDefaultCmd = true
-	root.PersistentFlags().String("source", envOrDefault("PEACE_SOURCE", "quran"), "Quran data source: quran or alquran")
-	root.PersistentFlags().String("fallback", envOrDefault("PEACE_FALLBACK_SOURCE", ""), "Optional fallback source used when the primary source fails")
-	root.PersistentFlags().String("translation", envOrDefault("PEACE_TRANSLATION", source.DefaultTranslation), "Translation ID (legacy AlQuran Cloud ID or Quran.com numeric ID)")
+	root.PersistentFlags().String("translation", envOrDefault("PEACE_TRANSLATION", quran.DefaultTranslationID), "Translation ID (numeric; legacy IDs such as en.sahih migrate automatically)")
 
 	listen := newListenCommand(runtime)
 	root.AddCommand(listen)
@@ -81,8 +79,8 @@ func newRootCommand(runtime Runtime) *cobra.Command {
 		short := map[string]string{"random": "Set a random ayah wallpaper", "next": "Show the next ayah wallpaper", "prev": "Show the previous ayah wallpaper"}[action]
 		cmd := &cobra.Command{Use: action, Short: short, Long: short + ".", Example: "  peace " + action, Args: noArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 			return runtime.wallpaper(wallpaperOptions{
-				Action: action, Random: flagBool(cmd, "random"), Source: flagString(cmd, "source"),
-				Fallback: flagString(cmd, "fallback"), Translation: flagString(cmd, "translation"), Render: wallpaperRenderOptions(cmd),
+				Action: action, Random: flagBool(cmd, "random"),
+				Translation: flagString(cmd, "translation"), Render: wallpaperRenderOptions(cmd),
 			})
 		}}
 		addWallpaperFlags(cmd)
@@ -146,13 +144,13 @@ func newListenCommand(runtime Runtime) *cobra.Command {
 		Render: RenderOptions{ShowTranslation: true, ShowReference: true},
 	}
 	if options.Reciter == "" {
-		options.Reciter = "ar.alafasy"
+		options.Reciter = quran.DefaultReciterID
 	}
 	cmd := &cobra.Command{
 		Use:     "listen SURAH[:AYAH|:START-END|:START-]",
 		Short:   "Play Quran recitation",
 		Long:    "Play one ayah, an ayah range, or the rest of a surah. Use --follow to update the wallpaper as playback advances. Wallpaper translation and reference are shown by default and can be hidden. Use --use-theme to keep the active Omarchy text colors instead of adapting colors to each wallpaper.",
-		Example: "  peace listen 2:255\n  peace listen 18:1-10 --reciter ar.alafasy\n  peace listen 110 --follow --random\n  peace listen 110 --follow --use-theme",
+		Example: "  peace listen 2:255\n  peace listen 18:1-10 --reciter 7\n  peace listen 110 --follow --random\n  peace listen 110 --follow --use-theme",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
 				return &cliUsageError{err: errors.New("peace listen: ayah reference is required")}
@@ -172,10 +170,10 @@ func newListenCommand(runtime Runtime) *cobra.Command {
 				}
 			}
 			if !safeID(options.Reciter) {
-				return &cliUsageError{err: errors.New("peace listen: invalid reciter ID (example: --reciter ar.alafasy)")}
+				return &cliUsageError{err: errors.New("peace listen: invalid reciter ID (example: --reciter 7; run `peace reciters`)")}
 			}
 			if translation := flagString(cmd, "translation"); !safeID(translation) {
-				return &cliUsageError{err: errors.New("peace listen: invalid translation ID (example: --translation en.sahih)")}
+				return &cliUsageError{err: errors.New("peace listen: invalid translation ID (example: --translation 20; run `peace translations`)")}
 			}
 			if options.Random && !options.Follow {
 				return &cliUsageError{err: errors.New("peace listen: --random requires --follow (example: peace listen 110 --follow --random)")}
@@ -184,8 +182,6 @@ func newListenCommand(runtime Runtime) *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			options.Reference = args[0]
-			options.Source = flagString(cmd, "source")
-			options.Fallback = flagString(cmd, "fallback")
 			options.Translation = flagString(cmd, "translation")
 			return runtime.listenOptions(options)
 		},
@@ -220,8 +216,8 @@ func newWallpaperCommand(runtime Runtime, use, short, example string) *cobra.Com
 				action = args[0]
 			}
 			return runtime.wallpaper(wallpaperOptions{
-				Action: action, Random: flagBool(cmd, "random"), Source: flagString(cmd, "source"),
-				Fallback: flagString(cmd, "fallback"), Translation: flagString(cmd, "translation"), Render: wallpaperRenderOptions(cmd),
+				Action: action, Random: flagBool(cmd, "random"),
+				Translation: flagString(cmd, "translation"), Render: wallpaperRenderOptions(cmd),
 			})
 		}}
 	addWallpaperFlags(cmd)
@@ -264,8 +260,8 @@ func newWordsCommand(runtime Runtime) *cobra.Command {
 	return &cobra.Command{
 		Use:     "words SURAH:AYAH",
 		Short:   "Show word-by-word Arabic, transliteration, and meaning",
-		Long:    "Print each word of one ayah with its Arabic text, transliteration, and English meaning. Word-by-word data is available with --source quran.",
-		Example: "  peace words 2:255\n  peace words 2:255 --source quran",
+		Long:    "Print each word of one ayah with its Arabic text, transliteration, and English meaning.",
+		Example: "  peace words 2:255\n  peace words 2:255 --translation 20",
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return &cliUsageError{err: errors.New("peace words: ayah reference is required (example: peace words 2:255)")}
@@ -277,13 +273,10 @@ func newWordsCommand(runtime Runtime) *cobra.Command {
 			if err != nil {
 				return &cliUsageError{err: err}
 			}
-			dataSource, err := runtime.library(flagString(cmd, "source"), flagString(cmd, "fallback"))
-			if err != nil {
-				return err
-			}
+			client := quran.New(runtime.Config.CacheDir)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			words, err := dataSource.Words(ctx, surah, ayah)
+			words, err := client.Words(ctx, surah, ayah, flagString(cmd, "translation"))
 			if err != nil {
 				return fmt.Errorf("peace words: %w", err)
 			}
@@ -309,14 +302,11 @@ func newListCommand(runtime Runtime, name, short string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     name,
 		Short:   short,
-		Long:    short + " from the selected source. Results are cached in the peace cache directory.",
+		Long:    short + " from Quran.com. Results are cached in the peace cache directory.",
 		Example: "  peace " + name + "\n  peace " + name + " --lang en",
 		Args:    noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			dataSource, err := runtime.library(flagString(cmd, "source"), flagString(cmd, "fallback"))
-			if err != nil {
-				return err
-			}
+			client := quran.New(runtime.Config.CacheDir)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			language := flagString(cmd, "lang")
@@ -324,7 +314,7 @@ func newListCommand(runtime Runtime, name, short string) *cobra.Command {
 			_, _ = fmt.Fprintln(output, "ID\tNAME\tLANGUAGE")
 			switch name {
 			case "reciters":
-				reciters, listErr := dataSource.Reciters(ctx)
+				reciters, listErr := client.Reciters(ctx)
 				if listErr != nil {
 					return fmt.Errorf("peace reciters: %w", listErr)
 				}
@@ -334,7 +324,7 @@ func newListCommand(runtime Runtime, name, short string) *cobra.Command {
 					}
 				}
 			case "translations":
-				translations, listErr := dataSource.Translations(ctx)
+				translations, listErr := client.Translations(ctx)
 				if listErr != nil {
 					return fmt.Errorf("peace translations: %w", listErr)
 				}

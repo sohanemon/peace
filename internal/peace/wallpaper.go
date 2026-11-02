@@ -12,14 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"io.github.sohanemon/peace/internal/source"
+	"io.github.sohanemon/peace/internal/quran"
 )
 
 type wallpaperOptions struct {
 	Action      string
 	Random      bool
-	Source      string
-	Fallback    string
 	Translation string
 	Render      RenderOptions
 }
@@ -33,13 +31,10 @@ func (r Runtime) wallpaper(options wallpaperOptions) error {
 	if err != nil {
 		return err
 	}
-	dataSource, err := r.library(options.Source, options.Fallback)
-	if err != nil {
-		return err
-	}
+	client := quran.New(r.Config.CacheDir)
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
-	surah, ayah, text, err := fetchAyahByAbsolute(ctx, dataSource, absoluteAyah, options.Translation)
+	ayah, err := fetchAyahByAbsolute(ctx, client, absoluteAyah, options.Translation)
 	if err != nil {
 		return err
 	}
@@ -52,7 +47,7 @@ func (r Runtime) wallpaper(options wallpaperOptions) error {
 		return err
 	}
 	output := filepath.Join(outputDir, fmt.Sprintf("ayah-%d-%d.png", time.Now().UnixNano(), absoluteAyah))
-	if err := r.renderAyahText(surah, ayah, text, base, output, options.Render); err != nil {
+	if err := r.renderAyahText(ayah, base, output, options.Render); err != nil {
 		return err
 	}
 	cmd := exec.Command("omarchy", "theme", "bg", "set", output)
@@ -91,23 +86,27 @@ func (r Runtime) chooseWallpaperAyah(action string) (int, error) {
 	}
 }
 
-func fetchAyahByAbsolute(ctx context.Context, dataSource source.Library, number int, translation string) (int, int, ayahText, error) {
-	chapters, err := dataSource.Chapters(ctx)
+func fetchAyahByAbsolute(ctx context.Context, client *quran.Client, number int, translation string) (quran.Ayah, error) {
+	chapters, err := client.Chapters(ctx)
 	if err != nil {
-		return 0, 0, ayahText{}, err
+		return quran.Ayah{}, err
 	}
+	surah, ayah, err := chapterForAbsolute(chapters, number)
+	if err != nil {
+		return quran.Ayah{}, err
+	}
+	return client.Ayah(ctx, surah, ayah, translation)
+}
+
+func chapterForAbsolute(chapters []quran.Chapter, number int) (int, int, error) {
 	remaining := number
 	for _, chapter := range chapters {
 		if remaining <= chapter.Verses {
-			text, textErr := fetchAyahText(ctx, dataSource, chapter.Number, remaining, translation)
-			if textErr != nil {
-				return 0, 0, ayahText{}, textErr
-			}
-			return chapter.Number, remaining, text, nil
+			return chapter.Number, remaining, nil
 		}
 		remaining -= chapter.Verses
 	}
-	return 0, 0, ayahText{}, fmt.Errorf("ayah number %d is out of range", number)
+	return 0, 0, fmt.Errorf("ayah number %d is out of range", number)
 }
 
 func (r Runtime) wallpaperStateFile() string {

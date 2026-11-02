@@ -1,52 +1,52 @@
 package peace
 
 import (
-	"context"
 	"testing"
 
-	"io.github.sohanemon/peace/internal/source"
+	"io.github.sohanemon/peace/internal/quran"
 )
 
-type mappingLibrary struct {
-	chapters []source.Chapter
-	ayahs    map[int][]source.Ayah
+func TestChapterForAbsoluteMapsAcrossChapters(t *testing.T) {
+	chapters := []quran.Chapter{
+		{Number: 1, Verses: 7},
+		{Number: 2, Name: "Al-Baqarah", Verses: 286},
+	}
+	tests := []struct {
+		name      string
+		number    int
+		wantSurah int
+		wantAyah  int
+		wantErr   bool
+	}{
+		{name: "first ayah", number: 1, wantSurah: 1, wantAyah: 1},
+		{name: "first ayah of second surah", number: 8, wantSurah: 2, wantAyah: 1},
+		{name: "ayah 255 of second surah", number: 262, wantSurah: 2, wantAyah: 255},
+		{name: "out of range", number: 7000, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			surah, ayah, err := chapterForAbsolute(chapters, test.number)
+			if test.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for ayah %d", test.number)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("chapterForAbsolute: %v", err)
+			}
+			if surah != test.wantSurah || ayah != test.wantAyah {
+				t.Errorf("mapped to %d:%d, want %d:%d", surah, ayah, test.wantSurah, test.wantAyah)
+			}
+		})
+	}
 }
 
-func (m mappingLibrary) Surah(_ context.Context, surah int, _ string) ([]source.Ayah, error) {
-	return m.ayahs[surah], nil
-}
-
-func (m mappingLibrary) AudioURL(string, int, int) (string, error) { return "", nil }
-func (m mappingLibrary) Words(context.Context, int, int) ([]source.Word, error) {
-	return nil, nil
-}
-func (m mappingLibrary) Chapters(context.Context) ([]source.Chapter, error) {
-	return m.chapters, nil
-}
-func (m mappingLibrary) Reciters(context.Context) ([]source.Reciter, error) { return nil, nil }
-func (m mappingLibrary) Translations(context.Context) ([]source.Translation, error) {
-	return nil, nil
-}
-
-func TestFetchAyahByAbsoluteMapsAcrossChapters(t *testing.T) {
-	library := mappingLibrary{
-		chapters: []source.Chapter{{Number: 1, Verses: 7}, {Number: 2, Name: "Al-Baqarah", Verses: 286}},
-		ayahs: map[int][]source.Ayah{
-			1: {{Surah: 1, SurahName: "Al-Fatihah", Number: 1, Arabic: "a", Translation: "t"}},
-			2: {{Surah: 2, SurahName: "Al-Baqarah", Number: 255, Arabic: "arabic", Translation: "translation"}},
-		},
+func TestAyahReference(t *testing.T) {
+	if got := ayahReference(quran.Ayah{Surah: 2, Number: 255, SurahName: "Al-Baqarah"}); got != "Al-Baqarah 2:255" {
+		t.Errorf("reference = %q", got)
 	}
-	surah, ayah, text, err := fetchAyahByAbsolute(context.Background(), library, 262, "en.sahih")
-	if err != nil {
-		t.Fatalf("fetchAyahByAbsolute: %v", err)
-	}
-	if surah != 2 || ayah != 255 {
-		t.Errorf("mapped to %d:%d, want 2:255", surah, ayah)
-	}
-	if text.Arabic != "arabic" || text.English != "translation" || text.Reference != "Al-Baqarah 2:255" {
-		t.Errorf("text = %+v", text)
-	}
-	if _, _, _, err := fetchAyahByAbsolute(context.Background(), library, 7000, "en.sahih"); err == nil {
-		t.Error("expected out-of-range error")
+	if got := ayahReference(quran.Ayah{Surah: 2, Number: 255}); got != "2:255" {
+		t.Errorf("reference without name = %q", got)
 	}
 }

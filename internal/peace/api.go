@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +12,7 @@ import (
 	"strconv"
 	"time"
 
-	"io.github.sohanemon/peace/internal/source"
+	"io.github.sohanemon/peace/internal/quran"
 )
 
 var referencePattern = regexp.MustCompile(`^([0-9]+)(?::([0-9]+)(?:-([0-9]*))?)?$`)
@@ -26,13 +25,10 @@ func (r Runtime) listenOptions(o Options) error {
 	if err := r.stop(); err != nil {
 		return err
 	}
-	dataSource, err := r.library(o.Source, o.Fallback)
-	if err != nil {
-		return fmt.Errorf("peace listen: %w", err)
-	}
+	client := quran.New(r.Config.CacheDir)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	counts, err := r.surahCounts(ctx, dataSource)
+	counts, err := r.surahCounts(ctx, client)
 	if err != nil {
 		return fmt.Errorf("peace listen: unable to fetch surah list: %w", err)
 	}
@@ -49,13 +45,13 @@ func (r Runtime) listenOptions(o Options) error {
 	if start > end {
 		return errors.New("peace listen: ayah range start must be less than or equal to end")
 	}
-	urls, err := r.audioURLs(ctx, dataSource, surah, start, end, o.Reciter)
+	urls, err := r.audioURLs(ctx, client, surah, start, end, o.Reciter)
 	if err != nil {
 		return fmt.Errorf("peace listen: unable to fetch audio for surah %d (%s): %w", surah, o.Reciter, err)
 	}
 	introURL := ""
 	if shouldUseBasmala(o.Basmala, surah, start) {
-		introURL, err = r.basmalaAudioURL(ctx, dataSource, o.Reciter)
+		introURL, err = r.basmalaAudioURL(ctx, client, o.Reciter)
 		if err != nil {
 			return fmt.Errorf("peace listen: unable to fetch introductory Basmala for %s: %w", o.Reciter, err)
 		}
@@ -70,7 +66,7 @@ func (r Runtime) listenOptions(o Options) error {
 			return fmt.Errorf("peace listen: snapshot current wallpaper: %w", err)
 		}
 	}
-	state := PlayState{Surah: surah, Start: start, End: end, Reciter: o.Reciter, Source: o.Source, Fallback: o.Fallback, Translation: o.Translation, Follow: o.Follow, Random: o.Random, Render: o.Render, Basmala: o.Basmala, BaseImage: baseImage, Preparing: o.Follow}
+	state := PlayState{Surah: surah, Start: start, End: end, Reciter: o.Reciter, Translation: o.Translation, Follow: o.Follow, Random: o.Random, Render: o.Render, Basmala: o.Basmala, BaseImage: baseImage, Preparing: o.Follow}
 	if o.Follow && o.Random {
 		state.RandomSources = r.backgroundCandidates()
 		rand.Shuffle(len(state.RandomSources), func(i, j int) {
@@ -89,7 +85,7 @@ func (r Runtime) listenOptions(o Options) error {
 			if wallpaperBase == "" {
 				wallpaperBase = baseImage
 			}
-			request := wallpaperRequest{Source: dataSource, Translation: o.Translation, Surah: surah, Ayah: ayah, BaseImage: wallpaperBase, Basmala: o.Basmala, Render: o.Render}
+			request := wallpaperRequest{Client: client, Translation: o.Translation, Surah: surah, Ayah: ayah, BaseImage: wallpaperBase, Basmala: o.Basmala, Render: o.Render}
 			if err := r.prepareInitialWallpaper(ctx, request); err != nil {
 				if ayah == start {
 					return fmt.Errorf("peace listen: prepare first ayah wallpaper: %w", err)
@@ -188,12 +184,8 @@ func parseReference(ref string) (int, int, int, error) {
 	return surah, start, end, nil
 }
 
-func (r Runtime) library(name, fallback string) (source.Library, error) {
-	return source.New(name, source.Options{CacheDir: r.Config.CacheDir, Fallback: fallback})
-}
-
-func (r Runtime) surahCounts(ctx context.Context, dataSource source.Library) (map[int]int, error) {
-	chapters, err := dataSource.Chapters(ctx)
+func (r Runtime) surahCounts(ctx context.Context, client *quran.Client) (map[int]int, error) {
+	chapters, err := client.Chapters(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -207,10 +199,10 @@ func (r Runtime) surahCounts(ctx context.Context, dataSource source.Library) (ma
 	return out, nil
 }
 
-func (r Runtime) audioURLs(ctx context.Context, dataSource source.Library, surah, start, end int, reciter string) ([]string, error) {
+func (r Runtime) audioURLs(ctx context.Context, client *quran.Client, surah, start, end int, reciter string) ([]string, error) {
 	urls := make([]string, 0, end-start+1)
 	for ayah := start; ayah <= end; ayah++ {
-		url, err := dataSource.AudioURL(reciter, surah, ayah)
+		url, err := client.AudioURL(ctx, reciter, surah, ayah)
 		if err != nil {
 			return nil, err
 		}
@@ -222,8 +214,8 @@ func (r Runtime) audioURLs(ctx context.Context, dataSource source.Library, surah
 	return urls, nil
 }
 
-func (r Runtime) basmalaAudioURL(ctx context.Context, dataSource source.Library, reciter string) (string, error) {
-	url, err := dataSource.AudioURL(reciter, 1, 1)
+func (r Runtime) basmalaAudioURL(ctx context.Context, client *quran.Client, reciter string) (string, error) {
+	url, err := client.AudioURL(ctx, reciter, 1, 1)
 	if err != nil {
 		return "", err
 	}
@@ -231,13 +223,6 @@ func (r Runtime) basmalaAudioURL(ctx context.Context, dataSource source.Library,
 		return "", errors.New("Basmala audio URL missing")
 	}
 	return url, nil
-}
-
-var httpClient = source.NewClient()
-
-// openURL performs a GET with context cancellation, retry, and a 2xx status check.
-func openURL(ctx context.Context, url string) (*http.Response, error) {
-	return httpClient.Get(ctx, url)
 }
 
 func writeAtomic(path string, data []byte, mode os.FileMode) error {

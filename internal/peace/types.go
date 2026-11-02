@@ -13,8 +13,6 @@ type Config struct {
 type Options struct {
 	Reference   string
 	Reciter     string
-	Source      string
-	Fallback    string
 	Translation string
 	Follow      bool
 	Random      bool
@@ -37,8 +35,6 @@ type PlayState struct {
 	Start         int           `json:"start"`
 	End           int           `json:"end"`
 	Reciter       string        `json:"reciter"`
-	Source        string        `json:"source"`
-	Fallback      string        `json:"fallback,omitempty"`
 	Translation   string        `json:"translation"`
 	Follow        bool          `json:"follow"`
 	Random        bool          `json:"random,omitempty"`

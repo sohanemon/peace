@@ -37,14 +37,8 @@ import (
 	"golang.org/x/image/webp"
 
 	"io.github.sohanemon/peace/assets"
-	"io.github.sohanemon/peace/internal/source"
+	"io.github.sohanemon/peace/internal/quran"
 )
-
-type ayahText struct {
-	Arabic    string
-	English   string
-	Reference string
-}
 
 type themeColors struct {
 	Accent     string
@@ -90,13 +84,13 @@ var fontFaces struct {
 	err                 error
 }
 
-func (r Runtime) renderAyah(ctx context.Context, dataSource source.Library, translation string, surah, ayah int, baseImage, output string, showBasmala bool, renderOptions RenderOptions) error {
-	text, err := fetchAyahText(ctx, dataSource, surah, ayah, translation)
+func (r Runtime) renderAyah(ctx context.Context, client *quran.Client, translation string, surah, ayah int, baseImage, output string, showBasmala bool, renderOptions RenderOptions) error {
+	entry, err := client.Ayah(ctx, surah, ayah, translation)
 	if err != nil {
 		return err
 	}
-	text.Arabic = displayAyahArabic(surah, ayah, text.Arabic, showBasmala)
-	return r.renderAyahText(surah, ayah, text, baseImage, output, renderOptions)
+	entry.Arabic = displayAyahArabic(surah, ayah, entry.Arabic, showBasmala)
+	return r.renderAyahText(entry, baseImage, output, renderOptions)
 }
 
 func displayAyahArabic(surah, ayah int, text string, showBasmala bool) string {
@@ -141,7 +135,7 @@ func normalizeArabicLetter(letter rune) rune {
 	}
 }
 
-func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, output string, renderOptions RenderOptions) error {
+func (r Runtime) renderAyahText(ayah quran.Ayah, baseImage, output string, renderOptions RenderOptions) error {
 	if err := loadRenderFonts(); err != nil {
 		return err
 	}
@@ -160,18 +154,18 @@ func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, outpu
 	fontScale := min(width, height*16/9) * 100 / 2560
 	fontScale = min(150, max(60, fontScale))
 	styles := []textStyle{{
-		Text: text.Arabic, Size: 76 * fontScale / 100, Minimum: 24, Face: fontFaces.Arabic,
+		Text: ayah.Arabic, Size: 76 * fontScale / 100, Minimum: 24, Face: fontFaces.Arabic,
 		Color: palette.Arabic, TargetContrast: 3, Outline: true, Direction: di.DirectionRTL, Script: language.Arabic,
 	}}
 	if renderOptions.ShowTranslation {
 		styles = append(styles, textStyle{
-			Text: trimEdgeQuote(text.English), Size: 32 * fontScale / 100, Minimum: 16, Face: fontFaces.Serif,
+			Text: trimEdgeQuote(ayah.Translation), Size: 32 * fontScale / 100, Minimum: 16, Face: fontFaces.Serif,
 			Color: palette.Translation, TargetContrast: 4.5, Outline: true, Direction: di.DirectionLTR, Script: language.Latin,
 		})
 	}
 	if renderOptions.ShowReference {
 		styles = append(styles, textStyle{
-			Text: text.Reference, Size: 18 * fontScale / 100, Minimum: 12, Face: fontFaces.Sans,
+			Text: ayahReference(ayah), Size: 18 * fontScale / 100, Minimum: 12, Face: fontFaces.Sans,
 			Color: palette.Reference, TargetContrast: 3, Direction: di.DirectionLTR, Script: language.Latin,
 		})
 	}
@@ -185,7 +179,7 @@ func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, outpu
 			var err error
 			rendered[i], err = renderTextBlock(styles[i], textWidth)
 			if err != nil {
-				return fmt.Errorf("render ayah %d:%d text: %w", surah, ayah, err)
+				return fmt.Errorf("render ayah %d:%d text: %w", ayah.Surah, ayah.Number, err)
 			}
 			stackHeight += rendered[i].Height
 			fits = fits && rendered[i].Width <= textWidth
@@ -197,7 +191,7 @@ func (r Runtime) renderAyahText(surah, ayah int, text ayahText, baseImage, outpu
 			styles[i].Size = max(styles[i].Minimum, styles[i].Size*9/10)
 		}
 		if attempt == 17 {
-			return fmt.Errorf("ayah %d:%d does not fit the display", surah, ayah)
+			return fmt.Errorf("ayah %d:%d does not fit the display", ayah.Surah, ayah.Number)
 		}
 	}
 	stackHeight = gap * 2
@@ -784,22 +778,11 @@ func abs(value int) int {
 	return value
 }
 
-func fetchAyahText(ctx context.Context, dataSource source.Library, surah, ayah int, translation string) (ayahText, error) {
-	ayahs, err := dataSource.Surah(ctx, surah, translation)
-	if err != nil {
-		return ayahText{}, err
+func ayahReference(ayah quran.Ayah) string {
+	if ayah.SurahName == "" {
+		return fmt.Sprintf("%d:%d", ayah.Surah, ayah.Number)
 	}
-	for _, entry := range ayahs {
-		if entry.Number != ayah {
-			continue
-		}
-		reference := fmt.Sprintf("%s %d:%d", entry.SurahName, surah, entry.Number)
-		if entry.SurahName == "" {
-			reference = fmt.Sprintf("%d:%d", surah, entry.Number)
-		}
-		return ayahText{Arabic: entry.Arabic, English: entry.Translation, Reference: reference}, nil
-	}
-	return ayahText{}, fmt.Errorf("ayah %d:%d is unavailable", surah, ayah)
+	return fmt.Sprintf("%s %d:%d", ayah.SurahName, ayah.Surah, ayah.Number)
 }
 
 func (r Runtime) currentColors() themeColors {
