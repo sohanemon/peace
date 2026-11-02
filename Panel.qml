@@ -28,6 +28,14 @@ Panel {
   property bool showReference: true
   property bool useThemeColors: false
   property string reciterID: "7"
+  property var reciterOptions: [{
+    "value": "7",
+    "label": "Mishary Alafasy"
+  }, {
+    "value": "6",
+    "label": "Mahmoud Al-Husary"
+  }]
+  property bool recitersLoaded: false
   property int bufferSize: 10
   property int leadSize: 2
   property int workerCount: 2
@@ -81,7 +89,13 @@ Panel {
   readonly property int currentSurahNumber: liveReferenceMatch ? Number(liveReferenceMatch[1]) : (selectedReferenceMatch ? Number(selectedReferenceMatch[1]) : 0)
   readonly property int currentAyahNumber: liveReferenceMatch ? Number(liveReferenceMatch[2]) : (selectedReferenceMatch && selectedReferenceMatch[2] ? Number(selectedReferenceMatch[2]) : 1)
   readonly property string currentSurahName: currentSurahNumber > 0 ? (surahNames[currentSurahNumber - 1] || "Surah " + currentSurahNumber) : "Choose a Surah"
-  readonly property string reciterName: reciterID === "6" ? "Mahmoud Al-Husary" : "Mishary Alafasy"
+  readonly property string reciterName: {
+    for (var index = 0; index < reciterOptions.length; index++) {
+      if (String(reciterOptions[index].value) === reciterID)
+        return reciterOptions[index].label
+    }
+    return "Reciter " + reciterID
+  }
 
   function open() {
     root.controller.show()
@@ -89,6 +103,7 @@ Panel {
     root.artworkIsSessionBase = false
     refreshStatus()
     refreshArtwork()
+    refreshReciters()
   }
 
   function close() {
@@ -120,6 +135,41 @@ Panel {
     if (!statusProcess.running)
       statusProcess.running = true
 
+  }
+
+  function refreshReciters() {
+    if (!root.recitersLoaded && !recitersProcess.running)
+      recitersProcess.running = true
+  }
+
+  function loadReciterOptions(output) {
+    var lines = String(output || "").split("\n")
+    var options = []
+    for (var index = 0; index < lines.length; index++) {
+      var line = lines[index].replace(/\r$/, "")
+      if (!line || line.indexOf("ID") === 0)
+        continue
+      var match = line.match(/^([0-9]+)\s{2,}(.+?)\s{2,}(\S+)$/)
+      if (!match)
+        continue
+      options.push({
+        "value": match[1],
+        "label": match[2]
+      })
+    }
+    var labelCounts = ({})
+    for (var countIndex = 0; countIndex < options.length; countIndex++) {
+      var label = options[countIndex].label
+      labelCounts[label] = (labelCounts[label] || 0) + 1
+    }
+    for (var optionIndex = 0; optionIndex < options.length; optionIndex++) {
+      if (labelCounts[options[optionIndex].label] > 1)
+        options[optionIndex].label += " (" + options[optionIndex].value + ")"
+    }
+    if (options.length > 0) {
+      root.reciterOptions = options
+      root.recitersLoaded = true
+    }
   }
 
   function refreshArtwork() {
@@ -470,13 +520,7 @@ Panel {
                 foreground: Qt.darker(root.foreground, 1.2)
                 fontFamily: root.fontFamily
                 Accessible.name: "Reciter"
-                options: [{
-                  "value": "7",
-                  "label": "Mishary Alafasy"
-                }, {
-                  "value": "6",
-                  "label": "Mahmoud Al-Husary"
-                }]
+                options: root.reciterOptions
                 onChanged: function(value) {
                   root.reciterID = value
                 }
@@ -741,6 +785,19 @@ Panel {
   }
 
   Process {
+    id: recitersProcess
+
+    command: [root.peaceExecutable, "reciters"]
+    stdout: StdioCollector {
+      onStreamFinished: root.loadReciterOptions(text)
+    }
+    onExited: function(exitCode) {
+      if (exitCode !== 0)
+        console.warn("peace reciters failed with exit code", exitCode)
+    }
+  }
+
+  Process {
     id: statusProcess
 
     command: [root.peaceExecutable, "status"]
@@ -788,5 +845,6 @@ Panel {
   Component.onCompleted: {
     root.refreshStatus()
     root.refreshArtwork()
+    root.refreshReciters()
   }
 }

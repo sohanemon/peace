@@ -88,6 +88,7 @@ type Client struct {
 	chapters     []Chapter
 	audioURLs    map[string]string
 	chapterAudio map[string]map[int]string
+	chapterFail  map[string]bool
 }
 
 // New returns a client that writes its cache under cacheDir.
@@ -107,6 +108,7 @@ func newClient(baseURL, cacheDir string, httpClient *http.Client) *Client {
 		delay:        retryBaseDelay,
 		audioURLs:    map[string]string{},
 		chapterAudio: map[string]map[int]string{},
+		chapterFail:  map[string]bool{},
 	}
 }
 
@@ -146,6 +148,13 @@ type audioFile struct {
 type audioResponse struct {
 	AudioFiles []audioFile `json:"audio_files"`
 	AudioFile  audioFile   `json:"audio_file"`
+}
+
+type audioPage struct {
+	AudioFiles []audioFile `json:"audio_files"`
+	Pagination struct {
+		NextPage *int `json:"next_page"`
+	} `json:"pagination"`
 }
 
 // Surah returns every ayah of one surah, including translation and words.
@@ -267,6 +276,7 @@ func (c *Client) AudioURL(ctx context.Context, reciter string, surah, ayah int) 
 	c.mu.Lock()
 	cached := c.audioURLs[key]
 	chapter := c.chapterAudio[chapterKey]
+	chapterFailed := c.chapterFail[chapterKey]
 	c.mu.Unlock()
 	if cached != "" {
 		return cached, nil
@@ -274,19 +284,12 @@ func (c *Client) AudioURL(ctx context.Context, reciter string, surah, ayah int) 
 	if chapter != nil && chapter[ayah] != "" {
 		return chapter[ayah], nil
 	}
-	// NOTE: Fetch the whole chapter once so a long surah does not require one
-	// request per ayah. Fall back to by_ayah when the chapter list is missing.
-	var chapterResponse audioResponse
-	if err := c.getJSON(ctx, chapterAudioPath(recitationID, surah), nil, &chapterResponse); err == nil {
-		audio := make(map[int]string, len(chapterResponse.AudioFiles))
-		for _, file := range chapterResponse.AudioFiles {
-			number := verseNumber(file.VerseKey, surah)
-			if number == 0 || file.URL == "" {
-				continue
-			}
-			audio[number] = absoluteAudioURL(file.URL)
-		}
-		if len(audio) > 0 {
+	// NOTE: The chapter endpoint is paginated (10 files by default), so collect
+	// every page once instead of requesting one URL per ayah. Fall back to
+	// by_ayah only when the chapter list is unavailable.
+	if !chapterFailed {
+		audio, err := c.fetchChapterAudio(ctx, recitationID, surah)
+		if err == nil && len(audio) > 0 {
 			c.mu.Lock()
 			c.chapterAudio[chapterKey] = audio
 			for number, url := range audio {
@@ -296,9 +299,14 @@ func (c *Client) AudioURL(ctx context.Context, reciter string, surah, ayah int) 
 			if url := audio[ayah]; url != "" {
 				return url, nil
 			}
+		} else {
+			c.mu.Lock()
+			c.chapterFail[chapterKey] = true
+			c.mu.Unlock()
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
 		}
-	} else if ctx.Err() != nil {
-		return "", ctx.Err()
 	}
 	var response audioResponse
 	if err := c.getJSON(ctx, ayahAudioPath(recitationID, surah, ayah), nil, &response); err != nil {
@@ -319,6 +327,30 @@ func (c *Client) AudioURL(ctx context.Context, reciter string, surah, ayah int) 
 	c.audioURLs[key] = absolute
 	c.mu.Unlock()
 	return absolute, nil
+}
+
+func (c *Client) fetchChapterAudio(ctx context.Context, recitationID, surah int) (map[int]string, error) {
+	query := queryValues("per_page", strconv.Itoa(perPage))
+	files, err := paginate(ctx, func(ctx context.Context, page int) ([]audioFile, *int, error) {
+		query.Set("page", strconv.Itoa(page))
+		var response audioPage
+		if err := c.getJSON(ctx, chapterAudioPath(recitationID, surah), query, &response); err != nil {
+			return nil, nil, err
+		}
+		return response.AudioFiles, response.Pagination.NextPage, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	audio := make(map[int]string, len(files))
+	for _, file := range files {
+		number := verseNumber(file.VerseKey, surah)
+		if number == 0 || file.URL == "" {
+			continue
+		}
+		audio[number] = absoluteAudioURL(file.URL)
+	}
+	return audio, nil
 }
 
 // Chapters returns the 114 surahs and their ayah counts.

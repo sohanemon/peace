@@ -282,34 +282,102 @@ func TestAudioURLUsesChapterList(t *testing.T) {
 	}
 }
 
-func TestAudioURLFallsBackToAyahEndpoint(t *testing.T) {
-	var ayahRequests int
+func TestAudioURLPaginatesChapterList(t *testing.T) {
+	var mu sync.Mutex
+	var pages []string
+	var perPage string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if strings.HasPrefix(request.URL.Path, "/recitations/7/by_chapter/") {
+		if request.URL.Path != "/recitations/7/by_chapter/2" {
 			http.NotFound(w, request)
 			return
 		}
-		if request.URL.Path == "/recitations/7/by_ayah/2:255" {
-			ayahRequests++
-			writeFixture(t, w, "audio_2_255.json")
-			return
+		page := request.URL.Query().Get("page")
+		mu.Lock()
+		pages = append(pages, page)
+		perPage = request.URL.Query().Get("per_page")
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		switch page {
+		case "1":
+			_, _ = w.Write([]byte(`{"audio_files":[{"verse_key":"2:1","url":"Alafasy/mp3/002001.mp3"},{"verse_key":"2:2","url":"Alafasy/mp3/002002.mp3"}],"pagination":{"per_page":50,"current_page":1,"next_page":2,"total_pages":2,"total_records":3}}`))
+		case "2":
+			_, _ = w.Write([]byte(`{"audio_files":[{"verse_key":"2:255","url":"Alafasy/mp3/002255.mp3"}],"pagination":{"per_page":50,"current_page":2,"next_page":null,"total_pages":2,"total_records":3}}`))
+		default:
+			http.NotFound(w, request)
 		}
-		http.NotFound(w, request)
 	}))
 	t.Cleanup(server.Close)
 	client := newClient(server.URL, t.TempDir(), server.Client())
 	client.attempts = 1
 	client.delay = time.Millisecond
 	client.storeReciters([]Reciter{{ID: "7", Name: "Mishary Rashid Alafasy", Slug: "mishary-rashid-alafasy", Language: "arabic"}})
+
+	url, err := client.AudioURL(context.Background(), "7", 2, 1)
+	if err != nil {
+		t.Fatalf("AudioURL 2:1: %v", err)
+	}
+	if url != "https://verses.quran.com/Alafasy/mp3/002001.mp3" {
+		t.Errorf("AudioURL 2:1 = %q", url)
+	}
+	url, err = client.AudioURL(context.Background(), "7", 2, 255)
+	if err != nil {
+		t.Fatalf("AudioURL 2:255: %v", err)
+	}
+	if url != "https://verses.quran.com/Alafasy/mp3/002255.mp3" {
+		t.Errorf("AudioURL 2:255 = %q", url)
+	}
+	mu.Lock()
+	gotPages := append([]string(nil), pages...)
+	gotPerPage := perPage
+	mu.Unlock()
+	if len(gotPages) != 2 || gotPages[0] != "1" || gotPages[1] != "2" {
+		t.Errorf("chapter pages = %v, want [1 2]", gotPages)
+	}
+	if gotPerPage != "50" {
+		t.Errorf("per_page = %q, want 50", gotPerPage)
+	}
+}
+
+func TestAudioURLFallsBackToAyahEndpoint(t *testing.T) {
+	var ayahRequests, chapterRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if strings.HasPrefix(request.URL.Path, "/recitations/7/by_chapter/") {
+			chapterRequests++
+			http.NotFound(w, request)
+			return
+		}
+		switch request.URL.Path {
+		case "/recitations/7/by_ayah/2:1":
+			ayahRequests++
+			_, _ = w.Write([]byte(`{"audio_files":[{"verse_key":"2:1","url":"Alafasy/mp3/002001.mp3"}]}`))
+		case "/recitations/7/by_ayah/2:255":
+			ayahRequests++
+			writeFixture(t, w, "audio_2_255.json")
+		default:
+			http.NotFound(w, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client := newClient(server.URL, t.TempDir(), server.Client())
+	client.attempts = 1
+	client.delay = time.Millisecond
+	client.storeReciters([]Reciter{{ID: "7", Name: "Mishary Rashid Alafasy", Slug: "mishary-rashid-alafasy", Language: "arabic"}})
+
+	if _, err := client.AudioURL(context.Background(), "7", 2, 1); err != nil {
+		t.Fatalf("AudioURL 2:1: %v", err)
+	}
 	url, err := client.AudioURL(context.Background(), "7", 2, 255)
 	if err != nil {
-		t.Fatalf("AudioURL: %v", err)
+		t.Fatalf("AudioURL 2:255: %v", err)
 	}
 	if url != "https://verses.quran.com/Mishary_Rashid_al-Afasy_128/002255.mp3" {
 		t.Errorf("AudioURL = %q", url)
 	}
-	if ayahRequests != 1 {
-		t.Errorf("ayah requests = %d, want 1", ayahRequests)
+	if chapterRequests != 1 {
+		t.Errorf("chapter requests = %d, want 1", chapterRequests)
+	}
+	if ayahRequests != 2 {
+		t.Errorf("ayah requests = %d, want 2", ayahRequests)
 	}
 }
 
