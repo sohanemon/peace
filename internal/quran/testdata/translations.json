@@ -1,0 +1,36 @@
+{
+  "translations": [
+    {
+      "id": 19,
+      "name": "Pickthall",
+      "author_name": "Mohammed Marmaduke William Pickthall",
+      "slug": "pickthall",
+      "language_name": "english",
+      "language_code": "en"
+    },
+    {
+      "id": 20,
+      "name": "Saheeh International",
+      "author_name": "Saheeh International",
+      "slug": "saheeh-international",
+      "language_name": "english",
+      "language_code": "en"
+    },
+    {
+      "id": 85,
+      "name": "Urdu Translation (Jalandhry)",
+      "author_name": "Fateh Muhammad Jalandhry",
+      "slug": "urdu-jalandhry",
+      "language_name": "urdu",
+      "language_code": "ur"
+    },
+    {
+      "id": 131,
+      "name": "Dr. Mustafa Khattab, the Clear Quran",
+      "author_name": "Dr. Mustafa Khattab",
+      "slug": "clear-quran",
+      "language_name": "english",
+      "language_code": "en"
+    }
+  ]
+}

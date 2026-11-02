@@ -1,0 +1,90 @@
+{
+  "verses": [
+    {
+      "id": 8,
+      "verse_key": "2:1",
+      "text_uthmani": "الٓمٓ",
+      "words": [
+        {
+          "id": 1,
+          "position": 1,
+          "char_type_name": "word",
+          "text_uthmani": "الٓ",
+          "transliteration": {
+            "text": "Alif Lam"
+          },
+          "translation": {
+            "text": "Alif, Lam",
+            "language_name": "english"
+          }
+        },
+        {
+          "id": 2,
+          "position": 2,
+          "char_type_name": "word",
+          "text_uthmani": "مٓ",
+          "transliteration": {
+            "text": "Meem"
+          },
+          "translation": {
+            "text": "Meem",
+            "language_name": "english"
+          }
+        },
+        {
+          "id": 3,
+          "position": 3,
+          "char_type_name": "end",
+          "text_uthmani": "١",
+          "transliteration": {
+            "text": ""
+          },
+          "translation": {
+            "text": "",
+            "language_name": "english"
+          }
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "verse_key": "2:2",
+      "text_uthmani": "ذَٰلِكَ ٱلْكِتَٰبُ لَا رَيْبَ ۛ فِيهِ ۛ هُدًى لِّلْمُتَّقِينَ",
+      "words": [
+        {
+          "id": 4,
+          "position": 1,
+          "char_type_name": "word",
+          "text_uthmani": "ذَٰلِكَ",
+          "transliteration": {
+            "text": "Zalika"
+          },
+          "translation": {
+            "text": "This",
+            "language_name": "english"
+          }
+        },
+        {
+          "id": 5,
+          "position": 2,
+          "char_type_name": "word",
+          "text_uthmani": "ٱلْكِتَٰبُ",
+          "transliteration": {
+            "text": "al-kitabu"
+          },
+          "translation": {
+            "text": "the Book",
+            "language_name": "english"
+          }
+        }
+      ]
+    }
+  ],
+  "pagination": {
+    "per_page": 50,
+    "current_page": 1,
+    "next_page": null,
+    "total_pages": 1,
+    "total_records": 2
+  }
+}
