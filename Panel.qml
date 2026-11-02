@@ -25,6 +25,7 @@ Panel {
   property bool randomBackground: false
   property bool advancedOptionsExpanded: false
   property bool showTranslation: true
+  property bool showWordTranslation: false
   property bool showReference: true
   property bool useThemeColors: false
   property string reciterID: "7"
@@ -214,7 +215,7 @@ Panel {
       id: keyCatcher
 
       anchors.fill: parent
-      blocked: referenceInput.activeFocus || reciterInput.popupOpen || basmalaToggle.activeFocus || followToggle.activeFocus || randomBackgroundToggle.activeFocus || translationToggle.activeFocus || referenceToggle.activeFocus || themeColorsToggle.activeFocus
+      blocked: referenceInput.activeFocus || reciterInput.popupOpen || basmalaToggle.activeFocus || followToggle.activeFocus || randomBackgroundToggle.activeFocus || translationToggle.activeFocus || wordTranslationToggle.activeFocus || referenceToggle.activeFocus || themeColorsToggle.activeFocus
       onCloseRequested: root.close()
 
       Column {
@@ -374,6 +375,7 @@ Panel {
                   var args = ["listen", reference, "--reciter", root.reciterID]
                   args.push("--basmala=" + String(root.basmalaEnabled))
                   args.push("--show-translation=" + String(root.showTranslation))
+                  args.push("--show-word-translation=" + String(root.showWordTranslation))
                   args.push("--show-reference=" + String(root.showReference))
                   if (root.useThemeColors)
                     args.push("--use-theme")
@@ -672,6 +674,20 @@ Panel {
                   borderSpec: Border.none()
                   Accessible.name: "Show ayah translation"
                   onClicked: root.showTranslation = !root.showTranslation
+                }
+
+                Toggle {
+                  id: wordTranslationToggle
+
+                  width: parent.width
+                  label: "Show word meanings"
+                  description: "Display word-by-word translations"
+                  titleSize: Style.font.bodySmall
+                  checked: root.showWordTranslation
+                  color: wordTranslationToggle.activeFocus ? Style.focusFillFor(root.foreground, Color.accent) : "transparent"
+                  borderSpec: Border.none()
+                  Accessible.name: "Show word-by-word translations"
+                  onClicked: root.showWordTranslation = !root.showWordTranslation
                 }
 
                 Toggle {

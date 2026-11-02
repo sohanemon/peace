@@ -167,7 +167,7 @@ func (c *Client) Surah(ctx context.Context, surah int, translationID string) ([]
 	if err != nil {
 		return nil, err
 	}
-	key := fmt.Sprintf("surah-%d-%s", surah, translation.ID)
+	key := fmt.Sprintf("surah-%d-%s-words-v2", surah, translation.ID)
 	var cached []Ayah
 	if loadCache(c.cacheDir, key, surahCacheTTL, &cached) && len(cached) > 0 {
 		return cached, nil
@@ -242,7 +242,7 @@ func (c *Client) fetchVerses(ctx context.Context, surah int, translationID strin
 		"fields", "text_uthmani",
 		"translations", translationID,
 		"words", "true",
-		"word_fields", "text_uthmani,transliteration",
+		"word_fields", "text_uthmani,transliteration,translation",
 		"per_page", strconv.Itoa(perPage),
 	)
 	return paginate(ctx, func(ctx context.Context, page int) ([]verse, *int, error) {

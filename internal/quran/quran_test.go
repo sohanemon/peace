@@ -201,7 +201,7 @@ func TestWords(t *testing.T) {
 	if wordQuery != "true" {
 		t.Errorf("words query = %q, want true", wordQuery)
 	}
-	if wordFields != "text_uthmani,transliteration" {
+	if wordFields != "text_uthmani,transliteration,translation" {
 		t.Errorf("word_fields = %q", wordFields)
 	}
 }

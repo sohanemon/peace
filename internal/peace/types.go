@@ -24,9 +24,10 @@ type Options struct {
 }
 
 type RenderOptions struct {
-	UseTheme        bool `json:"use_theme,omitempty"`
-	ShowTranslation bool `json:"show_translation"`
-	ShowReference   bool `json:"show_reference"`
+	UseTheme            bool `json:"use_theme,omitempty"`
+	ShowTranslation     bool `json:"show_translation"`
+	ShowWordTranslation bool `json:"show_word_translation,omitempty"`
+	ShowReference       bool `json:"show_reference"`
 }
 
 // PlayState represents the current playback state of a recitation session.

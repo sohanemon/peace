@@ -190,6 +190,7 @@ func newListenCommand(runtime Runtime) *cobra.Command {
 	cmd.Flags().BoolVar(&options.Random, "random", false, "Shuffle backgrounds between ayahs (requires --follow)")
 	cmd.Flags().BoolVar(&options.Render.UseTheme, "use-theme", false, "Use active Omarchy colors instead of wallpaper-adapted colors")
 	cmd.Flags().BoolVar(&options.Render.ShowTranslation, "show-translation", true, "Show the ayah translation on the wallpaper")
+	cmd.Flags().BoolVar(&options.Render.ShowWordTranslation, "show-word-translation", false, "Show word-by-word meanings on the wallpaper")
 	cmd.Flags().BoolVar(&options.Render.ShowReference, "show-reference", true, "Show the surah and ayah reference on the wallpaper")
 	cmd.Flags().BoolVar(&options.Basmala, "basmala", false, "Show and play the introductory Basmala")
 	cmd.Flags().StringVar(&options.Reciter, "reciter", options.Reciter, "Reciter ID")
@@ -228,14 +229,16 @@ func addWallpaperFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("random", false, "Choose a random current background")
 	cmd.Flags().Bool("use-theme", false, "Use active Omarchy colors instead of wallpaper-adapted colors")
 	cmd.Flags().Bool("show-translation", true, "Show the ayah translation")
+	cmd.Flags().Bool("show-word-translation", false, "Show word-by-word meanings")
 	cmd.Flags().Bool("show-reference", true, "Show the surah and ayah reference")
 }
 
 func wallpaperRenderOptions(cmd *cobra.Command) RenderOptions {
 	return RenderOptions{
-		UseTheme:        flagBool(cmd, "use-theme"),
-		ShowTranslation: flagBool(cmd, "show-translation"),
-		ShowReference:   flagBool(cmd, "show-reference"),
+		UseTheme:            flagBool(cmd, "use-theme"),
+		ShowTranslation:     flagBool(cmd, "show-translation"),
+		ShowWordTranslation: flagBool(cmd, "show-word-translation"),
+		ShowReference:       flagBool(cmd, "show-reference"),
 	}
 }
 

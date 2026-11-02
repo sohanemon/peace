@@ -60,10 +60,37 @@ type textStyle struct {
 }
 
 type renderedText struct {
-	Image  *image.RGBA
-	Height int
-	Width  int
+	Image          *image.RGBA
+	Height         int
+	Width          int
+	AdvanceWidth   int
+	AdvanceCenterX int
+	Baseline       int
+	LineHeight     int
+	LineCount      int
 }
+
+const (
+	wallpaperHeroWidthRatio                   = 0.78
+	wallpaperFooterWidthRatio                 = 0.76
+	wallpaperTopMarginRatio                   = 0.06
+	wallpaperBottomMarginRatio                = 0.07
+	wallpaperHeroFooterGapRatio               = 0.045
+	wallpaperFooterMaxHeightRatio             = 0.32
+	wallpaperFooterItemGapRatio               = 0.012
+	wallpaperFooterScrimHeightRatio           = 0.28
+	wallpaperFooterScrimMaxAlpha        uint8 = 76
+	wallpaperReferenceOpacity           uint8 = 184
+	wallpaperTranslationFontSize              = 30
+	wallpaperTranslationMinimumFontSize       = 12
+	wallpaperReferenceFontSize                = 17
+	wallpaperReferenceMinimumFontSize         = 10
+	wallpaperFooterMinimumItemGap             = 8
+	wallpaperPlainArabicFontSize              = 76
+	wallpaperPlainArabicMinimumFontSize       = 24
+	wallpaperMinimumFontScale                 = 30
+	wallpaperFontScaleStep                    = 90
+)
 
 var colorPattern = regexp.MustCompile(`(?m)^([a-z_]+)\s*=\s*"(#[0-9A-Fa-f]{6})"`)
 var linearLuminance = func() [256]float64 {
@@ -149,98 +176,509 @@ func (r Runtime) renderAyahText(ayah quran.Ayah, baseImage, output string, rende
 	if !renderOptions.UseTheme {
 		palette = wallpaperTextPalette(backdrop, parseColor(colors.Accent))
 	}
-	textWidth := width * 78 / 100
-	maxHeight := height * 76 / 100
 	fontScale := min(width, height*16/9) * 100 / 2560
 	fontScale = min(150, max(60, fontScale))
-	styles := []textStyle{{
-		Text: ayah.Arabic, Size: 76 * fontScale / 100, Minimum: 24, Face: fontFaces.Arabic,
-		Color: palette.Arabic, TargetContrast: 3, Outline: true, Direction: di.DirectionRTL, Script: language.Arabic,
-	}}
-	if renderOptions.ShowTranslation {
-		styles = append(styles, textStyle{
-			Text: trimEdgeQuote(ayah.Translation), Size: 32 * fontScale / 100, Minimum: 16, Face: fontFaces.Serif,
-			Color: palette.Translation, TargetContrast: 4.5, Outline: true, Direction: di.DirectionLTR, Script: language.Latin,
-		})
+	footer, err := renderWallpaperFooter(ayah, renderOptions, palette, width, height, fontScale)
+	if err != nil {
+		return fmt.Errorf("render ayah %d:%d footer: %w", ayah.Surah, ayah.Number, err)
 	}
-	if renderOptions.ShowReference {
-		styles = append(styles, textStyle{
-			Text: ayahReference(ayah), Size: 18 * fontScale / 100, Minimum: 12, Face: fontFaces.Sans,
-			Color: palette.Reference, TargetContrast: 3, Direction: di.DirectionLTR, Script: language.Latin,
-		})
+	mainArea := layoutWallpaperText(width, height, 0, footer.Height)
+	var hero renderedText
+	var heroStyle *textStyle
+	if renderOptions.ShowWordTranslation && len(ayah.Words) > 0 {
+		hero, err = renderWordByWordBlock(ayah, palette, width, mainArea.MainHeight, fontScale)
+	} else {
+		var style textStyle
+		hero, style, err = renderPlainArabicBlock(ayah, palette, width, mainArea.MainHeight, fontScale)
+		heroStyle = &style
 	}
-	gap := max(18, height*5/100)
-	rendered := make([]renderedText, len(styles))
-	stackHeight := 0
-	for attempt := 0; attempt < 18; attempt++ {
-		stackHeight = gap * 2
-		fits := true
-		for i := range styles {
-			var err error
-			rendered[i], err = renderTextBlock(styles[i], textWidth)
-			if err != nil {
-				return fmt.Errorf("render ayah %d:%d text: %w", ayah.Surah, ayah.Number, err)
+	if err != nil {
+		return fmt.Errorf("render ayah %d:%d Arabic block: %w", ayah.Surah, ayah.Number, err)
+	}
+	if hero.Height > mainArea.MainHeight {
+		hero = scaleRenderedTextToHeight(hero, mainArea.MainHeight)
+	}
+	layout := layoutWallpaperText(width, height, hero.Height, footer.Height)
+	return composeWallpaperText(backdrop, hero, heroStyle, footer, layout, renderOptions.UseTheme, output)
+}
+
+type wbwColumn struct {
+	Arabic         renderedText
+	Meaning        renderedText
+	Width          int
+	ArabicMetrics  wbwLineMetrics
+	MeaningMetrics wbwLineMetrics
+	MeaningGap     int
+}
+
+type wbwRow struct {
+	Columns         []wbwColumn
+	Width           int
+	Height          int
+	ArabicBaseline  int
+	MeaningBaseline int
+}
+
+type wbwColumnPlacement struct {
+	ColumnLeft      int
+	ArabicLeft      int
+	MeaningLeft     int
+	ArabicTop       int
+	MeaningTop      int
+	Center          int
+	ArabicBaseline  int
+	MeaningBaseline int
+}
+
+type wallpaperFooterItem struct {
+	Text           renderedText
+	Top            int
+	Color          color.RGBA
+	TargetContrast float64
+	Reference      bool
+}
+
+type wallpaperFooter struct {
+	Width  int
+	Height int
+	Items  []wallpaperFooterItem
+}
+
+type wallpaperTextLayout struct {
+	HeroTop            int
+	MainTop            int
+	MainBottom         int
+	MainHeight         int
+	FooterTop          int
+	FooterBottom       int
+	FooterBottomMargin int
+	FooterWidth        int
+	HeroFooterGap      int
+}
+
+func renderWordByWordBlock(ayah quran.Ayah, palette textPalette, width, maxHeight, fontScale int) (renderedText, error) {
+	textWidth := width * 86 / 100
+	columnMaxWidth := max(120, textWidth/4)
+	var wordBlock renderedText
+	var rows []wbwRow
+	for attempt := 0; attempt < 20; attempt++ {
+		arabicStyle := textStyle{Size: 48 * fontScale / 100, Minimum: 14, Face: fontFaces.Arabic, Color: palette.Arabic, Direction: di.DirectionRTL, Script: language.Arabic}
+		meaningStyle := textStyle{Size: 22 * fontScale / 100, Minimum: 9, Face: fontFaces.Sans, Color: palette.Translation, Direction: di.DirectionLTR, Script: language.Latin}
+		var err error
+		columnGap := max(12, arabicStyle.Size/3)
+		rows, err = renderWBWRows(ayah.Words, textWidth, columnMaxWidth, max(10, arabicStyle.Size/3), columnGap, max(10, arabicStyle.Size/3), arabicStyle, meaningStyle)
+		if err != nil {
+			if attempt == 19 {
+				return renderedText{}, fmt.Errorf("render ayah %d:%d word meanings: %w", ayah.Surah, ayah.Number, err)
 			}
-			stackHeight += rendered[i].Height
-			fits = fits && rendered[i].Width <= textWidth
-		}
-		if fits && stackHeight <= maxHeight {
-			break
-		}
-		for i := range styles {
-			styles[i].Size = max(styles[i].Minimum, styles[i].Size*9/10)
-		}
-		if attempt == 17 {
-			return fmt.Errorf("ayah %d:%d does not fit the display", ayah.Surah, ayah.Number)
-		}
-	}
-	stackHeight = gap * 2
-	for _, block := range rendered {
-		stackHeight += block.Height
-	}
-	if !renderOptions.UseTheme {
-		textY := 0
-		for i := range rendered {
-			left := (width - rendered[i].Width) / 2
-			top := (height-stackHeight)/2 + textY
-			styles[i].Color = adjustTextColor(backdrop, rendered[i].Image, left, top, styles[i].Color, styles[i].TargetContrast)
-			recolorText(rendered[i].Image, styles[i].Color)
-			textY += rendered[i].Height + gap
-		}
-	}
-	stack := image.NewRGBA(image.Rect(0, 0, textWidth, stackHeight))
-	y := 0
-	for i := range rendered {
-		draw.Draw(stack, image.Rect(0, y, textWidth, y+rendered[i].Height), rendered[i].Image, image.Point{}, draw.Over)
-		y += rendered[i].Height + gap
-	}
-	outlineColors := make([]color.NRGBA, len(rendered))
-	outlineNeeded := make([]bool, len(rendered))
-	textY := 0
-	outlineRadius := max(1, min(2, min(width, height)/1200))
-	for i := range rendered {
-		if !styles[i].Outline {
-			textY += rendered[i].Height + gap
+			fontScale = max(wallpaperMinimumFontScale, fontScale*wallpaperFontScaleStep/100)
 			continue
 		}
-		left := (width - rendered[i].Width) / 2
-		top := (height-stackHeight)/2 + textY
-		outlineColors[i], outlineNeeded[i] = adaptiveOutlineColor(backdrop, rendered[i].Image, left, top)
-		textY += rendered[i].Height + gap
-	}
-	shadowText(backdrop, stack, width/2, height/2)
-	textY = 0
-	for i := range rendered {
-		if outlineNeeded[i] {
-			left := (width - rendered[i].Width) / 2
-			top := (height-stackHeight)/2 + textY
-			outline := outlineText(rendered[i].Image, outlineColors[i], outlineRadius)
-			outlineBounds := image.Rect(left, top, left+outline.Bounds().Dx(), top+outline.Bounds().Dy())
-			draw.Draw(backdrop, outlineBounds, outline, image.Point{}, draw.Over)
+		wordBlock = composeWBWRows(rows, textWidth, max(10, arabicStyle.Size/3), columnGap)
+		if wordBlock.Height <= maxHeight {
+			return wordBlock, nil
 		}
-		textY += rendered[i].Height + gap
+		if attempt == 19 {
+			return scaleRenderedTextToHeight(wordBlock, maxHeight), nil
+		}
+		fontScale = max(wallpaperMinimumFontScale, fontScale*wallpaperFontScaleStep/100)
 	}
-	compositeCentered(backdrop, stack, width/2, height/2)
+	return renderedText{}, fmt.Errorf("ayah %d:%d word-by-word block does not fit the main area", ayah.Surah, ayah.Number)
+}
+
+func renderWallpaperFooter(ayah quran.Ayah, options RenderOptions, palette textPalette, width, height, fontScale int) (wallpaperFooter, error) {
+	footerWidth := ratioPixels(width, wallpaperFooterWidthRatio)
+	maxHeight := ratioPixels(height, wallpaperFooterMaxHeightRatio)
+	itemGap := max(wallpaperFooterMinimumItemGap, ratioPixels(height, wallpaperFooterItemGapRatio))
+	for attempt := 0; attempt < 24; attempt++ {
+		footer := wallpaperFooter{Width: footerWidth}
+		if options.ShowTranslation && strings.TrimSpace(ayah.Translation) != "" {
+			style := textStyle{
+				Text: trimEdgeQuote(ayah.Translation), Size: max(wallpaperTranslationMinimumFontSize, wallpaperTranslationFontSize*fontScale/100), Minimum: wallpaperTranslationMinimumFontSize, Face: fontFaces.Serif,
+				Color: palette.Translation, TargetContrast: 4.5, Direction: di.DirectionLTR, Script: language.Latin,
+			}
+			block, err := renderBalancedTextBlock(style, footerWidth)
+			if err != nil {
+				if attempt == 23 {
+					return wallpaperFooter{}, err
+				}
+				fontScale = max(wallpaperMinimumFontScale, fontScale*wallpaperFontScaleStep/100)
+				continue
+			}
+			footer.Items = append(footer.Items, wallpaperFooterItem{Text: block, Color: style.Color, TargetContrast: style.TargetContrast})
+		}
+		if options.ShowReference {
+			style := textStyle{
+				Text: ayahReference(ayah), Size: max(wallpaperReferenceMinimumFontSize, wallpaperReferenceFontSize*fontScale/100), Minimum: wallpaperReferenceMinimumFontSize, Face: fontFaces.Sans,
+				Color: palette.Reference, TargetContrast: 3, Direction: di.DirectionLTR, Script: language.Latin,
+			}
+			block, err := renderTextBlock(style, footerWidth)
+			if err != nil {
+				if attempt == 23 {
+					return wallpaperFooter{}, err
+				}
+				fontScale = max(wallpaperMinimumFontScale, fontScale*wallpaperFontScaleStep/100)
+				continue
+			}
+			footer.Items = append(footer.Items, wallpaperFooterItem{Text: block, Color: style.Color, TargetContrast: style.TargetContrast, Reference: true})
+		}
+		for index := range footer.Items {
+			if index > 0 {
+				footer.Height += itemGap
+				footer.Items[index].Top = footer.Height
+			}
+			footer.Height += footer.Items[index].Text.Height
+		}
+		if footer.Height <= maxHeight {
+			if len(footer.Items) == 0 {
+				footer.Width = 0
+			}
+			return footer, nil
+		}
+		if attempt == 23 {
+			return wallpaperFooter{}, fmt.Errorf("footer height %d exceeds available height %d", footer.Height, maxHeight)
+		}
+		fontScale = max(wallpaperMinimumFontScale, fontScale*wallpaperFontScaleStep/100)
+	}
+	return wallpaperFooter{}, fmt.Errorf("footer does not fit the display")
+}
+
+func layoutWallpaperText(width, height, heroHeight, footerHeight int) wallpaperTextLayout {
+	layout := wallpaperTextLayout{
+		FooterBottomMargin: ratioPixels(height, wallpaperBottomMarginRatio),
+		MainTop:            ratioPixels(height, wallpaperTopMarginRatio),
+		HeroFooterGap:      ratioPixels(height, wallpaperHeroFooterGapRatio),
+		FooterWidth:        ratioPixels(width, wallpaperFooterWidthRatio),
+	}
+	layout.FooterBottom = height - layout.FooterBottomMargin
+	layout.FooterTop = layout.FooterBottom - footerHeight
+	layout.MainBottom = layout.FooterBottom
+	if footerHeight > 0 {
+		layout.MainBottom = layout.FooterTop - layout.HeroFooterGap
+	}
+	layout.MainBottom = max(layout.MainTop, layout.MainBottom)
+	layout.MainHeight = layout.MainBottom - layout.MainTop
+	layout.HeroTop = layout.MainTop + max(0, layout.MainHeight-heroHeight)/2
+	return layout
+}
+
+func renderPlainArabicBlock(ayah quran.Ayah, palette textPalette, width, maxHeight, fontScale int) (renderedText, textStyle, error) {
+	style := textStyle{
+		Text: ayah.Arabic, Size: wallpaperPlainArabicFontSize * fontScale / 100, Minimum: wallpaperPlainArabicMinimumFontSize, Face: fontFaces.Arabic,
+		Color: palette.Arabic, TargetContrast: 3, Outline: true, Direction: di.DirectionRTL, Script: language.Arabic,
+	}
+	maxWidth := ratioPixels(width, wallpaperHeroWidthRatio)
+	for attempt := 0; attempt < 20; attempt++ {
+		block, err := renderTextBlock(style, maxWidth)
+		if err == nil && block.Height <= maxHeight {
+			return block, style, nil
+		}
+		if attempt == 19 || style.Size <= style.Minimum {
+			if err != nil {
+				return renderedText{}, style, err
+			}
+			return scaleRenderedTextToHeight(block, maxHeight), style, nil
+		}
+		style.Size = max(style.Minimum, style.Size*wallpaperFontScaleStep/100)
+	}
+	return renderedText{}, style, fmt.Errorf("Arabic block does not fit the main area")
+}
+
+func composeWallpaperText(backdrop *image.RGBA, hero renderedText, heroStyle *textStyle, footer wallpaperFooter, layout wallpaperTextLayout, useTheme bool, output string) error {
+	drawFooterScrim(backdrop, footer.Height)
+	heroLeft := (backdrop.Bounds().Dx() - hero.Width) / 2
+	heroTop := layout.HeroTop
+	if heroStyle != nil && !useTheme {
+		heroStyle.Color = adjustTextColor(backdrop, hero.Image, heroLeft, heroTop, heroStyle.Color, heroStyle.TargetContrast)
+		recolorText(hero.Image, heroStyle.Color)
+	}
+	shadowText(backdrop, hero.Image, backdrop.Bounds().Dx()/2, heroTop+hero.Height/2)
+	if heroStyle != nil && heroStyle.Outline {
+		outlineColor, needed := adaptiveOutlineColor(backdrop, hero.Image, heroLeft, heroTop)
+		if needed {
+			outlineRadius := max(1, min(2, min(backdrop.Bounds().Dx(), backdrop.Bounds().Dy())/1200))
+			outline := outlineText(hero.Image, outlineColor, outlineRadius)
+			draw.Draw(backdrop, image.Rect(heroLeft, heroTop, heroLeft+outline.Bounds().Dx(), heroTop+outline.Bounds().Dy()), outline, image.Point{}, draw.Over)
+		}
+	}
+	draw.Draw(backdrop, image.Rect(heroLeft, heroTop, heroLeft+hero.Width, heroTop+hero.Height), hero.Image, image.Point{}, draw.Over)
+	if footer.Height > 0 {
+		footerCanvas := image.NewRGBA(image.Rect(0, 0, footer.Width, footer.Height))
+		footerLeft := (backdrop.Bounds().Dx() - footer.Width) / 2
+		for _, item := range footer.Items {
+			itemTop := layout.FooterTop + item.Top
+			fill := item.Color
+			fill = adjustTextColor(backdrop, item.Text.Image, footerLeft, itemTop, fill, item.TargetContrast)
+			if item.Reference {
+				fill.A = 255
+			}
+			recolorText(item.Text.Image, fill)
+			if item.Reference {
+				scaleTextOpacity(item.Text.Image, wallpaperReferenceOpacity)
+			}
+			outlineColor, needsOutline := adaptiveOutlineColor(backdrop, item.Text.Image, footerLeft, itemTop)
+			if needsOutline {
+				outlineRadius := max(1, min(2, min(backdrop.Bounds().Dx(), backdrop.Bounds().Dy())/1200))
+				outline := outlineText(item.Text.Image, outlineColor, outlineRadius)
+				draw.Draw(footerCanvas, image.Rect(0, item.Top, footer.Width, item.Top+item.Text.Height), outline, image.Point{}, draw.Over)
+			}
+			draw.Draw(footerCanvas, image.Rect(0, item.Top, footer.Width, item.Top+item.Text.Height), item.Text.Image, image.Point{}, draw.Over)
+		}
+		shadowText(backdrop, footerCanvas, backdrop.Bounds().Dx()/2, layout.FooterTop+footer.Height/2)
+		compositeCentered(backdrop, footerCanvas, backdrop.Bounds().Dx()/2, layout.FooterTop+footer.Height/2)
+	}
+	return saveRenderedWallpaper(backdrop, output)
+}
+
+func drawFooterScrim(backdrop *image.RGBA, footerHeight int) {
+	if footerHeight == 0 {
+		return
+	}
+	height := ratioPixels(backdrop.Bounds().Dy(), wallpaperFooterScrimHeightRatio)
+	start := max(0, backdrop.Bounds().Dy()-height)
+	for y := start; y < backdrop.Bounds().Dy(); y++ {
+		progress := float64(y-start) / float64(max(1, backdrop.Bounds().Dy()-start))
+		alpha := uint8(math.Round(float64(wallpaperFooterScrimMaxAlpha) * progress * progress))
+		row := image.Rect(0, y, backdrop.Bounds().Dx(), y+1)
+		draw.Draw(backdrop, row, image.NewUniform(color.RGBA{A: alpha}), image.Point{}, draw.Over)
+	}
+}
+
+func scaleRenderedTextToHeight(text renderedText, height int) renderedText {
+	if height <= 0 {
+		height = 1
+	}
+	if text.Height <= height {
+		return text
+	}
+	width := max(1, text.Width*height/text.Height)
+	canvas := image.NewRGBA(image.Rect(0, 0, width, height))
+	xdraw.CatmullRom.Scale(canvas, canvas.Bounds(), text.Image, text.Image.Bounds(), xdraw.Over, nil)
+	text.Image, text.Width, text.Height = canvas, width, height
+	return text
+}
+
+func ratioPixels(size int, ratio float64) int {
+	return max(1, int(math.Round(float64(size)*ratio)))
+}
+
+func renderWBWRows(words []quran.Word, maxWidth, maxColumnWidth, columnPadding, columnGap, rowGap int, arabicStyle, meaningStyle textStyle) ([]wbwRow, error) {
+	arabicMetrics, err := measureWBWLineMetrics(words, arabicStyle, maxColumnWidth, false)
+	if err != nil {
+		return nil, err
+	}
+	meaningMetrics, err := measureWBWLineMetrics(words, meaningStyle, maxColumnWidth, true)
+	if err != nil {
+		return nil, err
+	}
+	columns := make([]wbwColumn, 0, len(words))
+	for _, word := range words {
+		if strings.TrimSpace(word.Arabic) == "" {
+			continue
+		}
+		arabicStyle.Text = word.Arabic
+		arabic, err := renderTextBlockWithMetrics(arabicStyle, maxColumnWidth, &arabicMetrics)
+		if err != nil {
+			return nil, err
+		}
+		arabic = cropRenderedText(arabic)
+		meaning := renderedText{Image: image.NewRGBA(image.Rect(0, 0, 1, 1)), Width: 1, Height: 1, AdvanceCenterX: 1, LineCount: 1}
+		if strings.TrimSpace(word.Translation) != "" {
+			meaningStyle.Text = strings.TrimSpace(word.Translation)
+			meaning, err = renderTextBlockWithMetrics(meaningStyle, maxColumnWidth, &meaningMetrics)
+			if err != nil {
+				return nil, err
+			}
+			meaning = cropRenderedText(meaning)
+		}
+		columnWidth := max(arabic.AdvanceWidth, meaning.AdvanceWidth) + columnPadding*2
+		columns = append(columns, wbwColumn{
+			Arabic: arabic, Meaning: meaning, Width: columnWidth,
+			ArabicMetrics: arabicMetrics, MeaningMetrics: meaningMetrics, MeaningGap: max(8, arabicMetrics.Height/5),
+		})
+	}
+	if len(columns) == 0 {
+		return nil, fmt.Errorf("ayah has no renderable words")
+	}
+	rows := layoutWBWRows(columns, maxWidth, columnGap)
+	for _, row := range rows {
+		if row.Width > maxWidth {
+			return nil, fmt.Errorf("word column width %d exceeds available width %d", row.Width, maxWidth)
+		}
+	}
+	return rows, nil
+}
+
+func layoutWBWRows(columns []wbwColumn, maxWidth, columnGap int) []wbwRow {
+	rows := make([]wbwRow, 0, 4)
+	row := wbwRow{}
+	for _, column := range columns {
+		addedWidth := column.Width
+		if len(row.Columns) > 0 {
+			addedWidth += columnGap
+		}
+		if len(row.Columns) > 0 && row.Width+addedWidth > maxWidth {
+			setWBWRowMetrics(&row)
+			rows = append(rows, row)
+			row = wbwRow{}
+			addedWidth = column.Width
+		}
+		row.Columns = append(row.Columns, column)
+		row.Width += addedWidth
+	}
+	if len(row.Columns) > 0 {
+		setWBWRowMetrics(&row)
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func measureWBWLineMetrics(words []quran.Word, style textStyle, maxWidth int, meanings bool) (wbwLineMetrics, error) {
+	pixelSize := style.Size * 4 / 3
+	input := shaping.Input{Direction: style.Direction, Face: style.Face, Size: fixed.I(pixelSize), Script: style.Script}
+	shaper := &shaping.HarfbuzzShaper{}
+	shape := func(line string) shaping.Output {
+		input.Text = []rune(line)
+		input.RunEnd = len(input.Text)
+		return shaper.Shape(input)
+	}
+	var ascent, descent int
+	measured := false
+	for _, word := range words {
+		text := word.Arabic
+		if meanings {
+			text = word.Translation
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+		for _, line := range wrapShapedText(text, maxWidth, shape) {
+			out := shape(line)
+			lineAscent, lineDescent := out.LineBounds.Ascent.Round(), out.LineBounds.Descent.Round()
+			for _, glyph := range out.Glyphs {
+				lineAscent = max(lineAscent, (glyph.YBearing + glyph.YOffset).Round())
+				lineDescent = min(lineDescent, (glyph.YBearing + glyph.Height + glyph.YOffset).Round())
+			}
+			if !measured {
+				ascent, descent = lineAscent, lineDescent
+				measured = true
+			} else {
+				ascent = max(ascent, lineAscent)
+				descent = min(descent, lineDescent)
+			}
+		}
+	}
+	if !measured && meanings {
+		out := shape("M")
+		ascent, descent = out.LineBounds.Ascent.Round(), out.LineBounds.Descent.Round()
+		for _, glyph := range out.Glyphs {
+			ascent = max(ascent, (glyph.YBearing + glyph.YOffset).Round())
+			descent = min(descent, (glyph.YBearing + glyph.Height + glyph.YOffset).Round())
+		}
+		measured = true
+	}
+	if !measured {
+		return wbwLineMetrics{}, fmt.Errorf("no text available for shared line metrics")
+	}
+	return wbwLineMetrics{Ascent: ascent, Descent: descent, Height: max(pixelSize*6/5, ascent-descent) + 8}, nil
+}
+
+func setWBWRowMetrics(row *wbwRow) {
+	first := row.Columns[0]
+	arabicMetrics, meaningMetrics := first.ArabicMetrics, first.MeaningMetrics
+	row.ArabicBaseline = (arabicMetrics.Height-(arabicMetrics.Ascent-arabicMetrics.Descent))/2 + arabicMetrics.Ascent
+	row.MeaningBaseline = row.ArabicBaseline - arabicMetrics.Descent + first.MeaningGap + meaningMetrics.Ascent
+	maxMeaningLines := 1
+	for _, column := range row.Columns {
+		maxMeaningLines = max(maxMeaningLines, column.Meaning.LineCount)
+	}
+	row.Height = max(arabicMetrics.Height, row.MeaningBaseline+(maxMeaningLines-1)*meaningMetrics.Height-meaningMetrics.Descent+4)
+}
+
+func composeWBWRows(rows []wbwRow, width, rowGap, columnGap int) renderedText {
+	height := 0
+	for index, row := range rows {
+		if index > 0 {
+			height += rowGap
+		}
+		height += row.Height
+	}
+	canvas := image.NewRGBA(image.Rect(0, 0, width, max(1, height)))
+	rowY := 0
+	for rowIndex, row := range rows {
+		if rowIndex > 0 {
+			rowY += rowGap
+		}
+		placements := wbwColumnPlacements(row, width, columnGap)
+		for columnIndex, column := range row.Columns {
+			placement := placements[columnIndex]
+			arabicX := placement.ArabicLeft
+			arabicY := rowY + placement.ArabicTop
+			draw.Draw(canvas, image.Rect(arabicX, arabicY, arabicX+column.Arabic.Width, arabicY+column.Arabic.Height), column.Arabic.Image, image.Point{}, draw.Over)
+			meaningX := placement.MeaningLeft
+			meaningY := rowY + placement.MeaningTop
+			draw.Draw(canvas, image.Rect(meaningX, meaningY, meaningX+column.Meaning.Width, meaningY+column.Meaning.Height), column.Meaning.Image, image.Point{}, draw.Over)
+		}
+		rowY += row.Height
+	}
+	return renderedText{Image: canvas, Width: width, Height: height}
+}
+
+func wbwColumnPlacements(row wbwRow, width, columnGap int) []wbwColumnPlacement {
+	lefts := wbwColumnLefts(row, width, columnGap)
+	placements := make([]wbwColumnPlacement, len(row.Columns))
+	for index, column := range row.Columns {
+		center := lefts[index] + column.Width/2
+		placements[index] = wbwColumnPlacement{
+			ColumnLeft: lefts[index],
+			ArabicLeft: center - column.Arabic.AdvanceCenterX, MeaningLeft: center - column.Meaning.AdvanceCenterX,
+			ArabicTop: row.ArabicBaseline - column.Arabic.Baseline, MeaningTop: row.MeaningBaseline - column.Meaning.Baseline,
+			Center: center, ArabicBaseline: row.ArabicBaseline, MeaningBaseline: row.MeaningBaseline,
+		}
+	}
+	return placements
+}
+
+func wbwColumnLefts(row wbwRow, width, gap int) []int {
+	lefts := make([]int, len(row.Columns))
+	right := (width-row.Width)/2 + row.Width
+	for index, column := range row.Columns {
+		lefts[index] = right - column.Width
+		right = lefts[index] - gap
+	}
+	return lefts
+}
+
+func cropRenderedText(text renderedText) renderedText {
+	alphaBounds := image.Rectangle{}
+	for y := 0; y < text.Height; y++ {
+		for x := 0; x < text.Width; x++ {
+			if text.Image.RGBAAt(x, y).A == 0 {
+				continue
+			}
+			point := image.Pt(x, y)
+			if alphaBounds.Empty() {
+				alphaBounds = image.Rectangle{Min: point, Max: point.Add(image.Pt(1, 1))}
+			} else {
+				alphaBounds = alphaBounds.Union(image.Rectangle{Min: point, Max: point.Add(image.Pt(1, 1))})
+			}
+		}
+	}
+	if alphaBounds.Empty() {
+		return renderedText{Image: image.NewRGBA(image.Rect(0, 0, 1, 1)), Width: 1, Height: 1}
+	}
+	alphaBounds = alphaBounds.Inset(-2).Intersect(text.Image.Bounds())
+	canvas := image.NewRGBA(image.Rect(0, 0, alphaBounds.Dx(), alphaBounds.Dy()))
+	draw.Draw(canvas, canvas.Bounds(), text.Image, alphaBounds.Min, draw.Src)
+	text.Image = canvas
+	text.Width, text.Height = canvas.Bounds().Dx(), canvas.Bounds().Dy()
+	text.AdvanceCenterX -= alphaBounds.Min.X
+	text.Baseline -= alphaBounds.Min.Y
+	return text
+}
+
+func saveRenderedWallpaper(backdrop *image.RGBA, output string) error {
 	if err := os.MkdirAll(filepath.Dir(output), 0o700); err != nil {
 		return err
 	}
@@ -280,7 +718,25 @@ func parseEmbeddedFont(path string) (*font.Face, error) {
 	return face, nil
 }
 
+type wbwLineMetrics struct {
+	Ascent  int
+	Descent int
+	Height  int
+}
+
 func renderTextBlock(style textStyle, maxWidth int) (renderedText, error) {
+	return renderTextBlockWithWrapping(style, maxWidth, nil, wrapShapedText)
+}
+
+func renderBalancedTextBlock(style textStyle, maxWidth int) (renderedText, error) {
+	return renderTextBlockWithWrapping(style, maxWidth, nil, wrapBalancedShapedText)
+}
+
+func renderTextBlockWithMetrics(style textStyle, maxWidth int, fixedMetrics *wbwLineMetrics) (renderedText, error) {
+	return renderTextBlockWithWrapping(style, maxWidth, fixedMetrics, wrapShapedText)
+}
+
+func renderTextBlockWithWrapping(style textStyle, maxWidth int, fixedMetrics *wbwLineMetrics, wrap func(string, int, func(string) shaping.Output) []string) (renderedText, error) {
 	text := strings.TrimSpace(style.Text)
 	if text == "" {
 		return renderedText{}, fmt.Errorf("text is empty")
@@ -293,32 +749,44 @@ func renderTextBlock(style textStyle, maxWidth int) (renderedText, error) {
 		input.RunEnd = len(input.Text)
 		return shaper.Shape(input)
 	}
-	lines := wrapShapedText(text, maxWidth, shape)
+	lines := wrap(text, maxWidth, shape)
 	type textLine struct {
-		Output  shaping.Output
-		Ascent  int
-		Descent int
-		Height  int
+		Output   shaping.Output
+		Ascent   int
+		Descent  int
+		Height   int
+		Baseline int
 	}
 	lineLayouts := make([]textLine, len(lines))
 	imageHeight := 0
+	advanceWidth := 0
 	for row, line := range lines {
 		out := shape(line)
 		ascent, descent := out.LineBounds.Ascent.Round(), out.LineBounds.Descent.Round()
-		for _, glyph := range out.Glyphs {
-			glyphAscent := (glyph.YBearing + glyph.YOffset).Round()
-			glyphDescent := (glyph.YBearing + glyph.Height + glyph.YOffset).Round()
-			ascent = max(ascent, glyphAscent)
-			descent = min(descent, glyphDescent)
+		if fixedMetrics != nil {
+			ascent, descent = fixedMetrics.Ascent, fixedMetrics.Descent
+		} else {
+			for _, glyph := range out.Glyphs {
+				glyphAscent := (glyph.YBearing + glyph.YOffset).Round()
+				glyphDescent := (glyph.YBearing + glyph.Height + glyph.YOffset).Round()
+				ascent = max(ascent, glyphAscent)
+				descent = min(descent, glyphDescent)
+			}
 		}
 		lineHeight := max(pixelSize*6/5, ascent-descent) + 8
-		lineLayouts[row] = textLine{Output: out, Ascent: ascent, Descent: descent, Height: lineHeight}
+		if fixedMetrics != nil {
+			lineHeight = fixedMetrics.Height
+		}
+		baseline := (lineHeight-(ascent-descent))/2 + ascent
+		lineLayouts[row] = textLine{Output: out, Ascent: ascent, Descent: descent, Height: lineHeight, Baseline: baseline}
 		imageHeight += lineHeight
+		advanceWidth = max(advanceWidth, abs(out.Advance.Round()))
 	}
 	imageHeight = max(1, imageHeight)
 	mask := image.NewAlpha(image.Rect(0, 0, maxWidth, imageHeight))
 	rowY := 0
-	for _, line := range lineLayouts {
+	firstBaseline := 0
+	for rowIndex, line := range lineLayouts {
 		out := line.Output
 		lineWidth := abs(out.Advance.Round())
 		if lineWidth > maxWidth {
@@ -328,7 +796,10 @@ func renderTextBlock(style textStyle, maxWidth int) (renderedText, error) {
 		if out.Direction == di.DirectionRTL && out.Advance < 0 {
 			penX += lineWidth
 		}
-		baseline := rowY + (line.Height-(line.Ascent-line.Descent))/2 + line.Ascent
+		baseline := rowY + line.Baseline
+		if rowIndex == 0 {
+			firstBaseline = baseline
+		}
 		rasterizer := vector.NewRasterizer(maxWidth, imageHeight)
 		for _, glyph := range out.Glyphs {
 			outline, ok := out.Face.GlyphDataOutline(glyph.GlyphID)
@@ -347,7 +818,14 @@ func renderTextBlock(style textStyle, maxWidth int) (renderedText, error) {
 	}
 	canvas := image.NewRGBA(image.Rect(0, 0, maxWidth, imageHeight))
 	draw.DrawMask(canvas, canvas.Bounds(), image.NewUniform(style.Color), image.Point{}, mask, image.Point{}, draw.Over)
-	return renderedText{Image: canvas, Width: maxWidth, Height: imageHeight}, nil
+	lineHeight := 0
+	if len(lineLayouts) > 0 {
+		lineHeight = lineLayouts[0].Height
+	}
+	return renderedText{
+		Image: canvas, Width: maxWidth, Height: imageHeight, AdvanceWidth: advanceWidth,
+		AdvanceCenterX: maxWidth / 2, Baseline: firstBaseline, LineHeight: lineHeight, LineCount: len(lineLayouts),
+	}, nil
 }
 
 func appendGlyphOutline(rasterizer *vector.Rasterizer, outline font.GlyphOutline, scale, x, baseline float32) {
@@ -393,6 +871,35 @@ func wrapShapedText(text string, maxWidth int, shape func(string) shaping.Output
 	}
 	if line != "" {
 		lines = append(lines, line)
+	}
+	return lines
+}
+
+func wrapBalancedShapedText(text string, maxWidth int, shape func(string) shaping.Output) []string {
+	lines := wrapShapedText(text, maxWidth, shape)
+	for pass := 0; pass < len(lines)*2; pass++ {
+		changed := false
+		for index := 0; index+1 < len(lines); index++ {
+			previousWords := strings.Fields(lines[index])
+			nextWords := strings.Fields(lines[index+1])
+			if len(previousWords) < 2 {
+				continue
+			}
+			balancedPrevious := strings.Join(previousWords[:len(previousWords)-1], " ")
+			balancedNext := strings.Join(append([]string{previousWords[len(previousWords)-1]}, nextWords...), " ")
+			if abs(shape(balancedNext).Advance.Round()) > maxWidth {
+				continue
+			}
+			before := abs(abs(shape(lines[index]).Advance.Round()) - abs(shape(lines[index+1]).Advance.Round()))
+			after := abs(abs(shape(balancedPrevious).Advance.Round()) - abs(shape(balancedNext).Advance.Round()))
+			if after < before {
+				lines[index], lines[index+1] = balancedPrevious, balancedNext
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
 	}
 	return lines
 }
@@ -643,6 +1150,20 @@ func recolorText(text *image.RGBA, fill color.RGBA) {
 				G: uint8(uint16(fill.G) * uint16(alpha) / 255),
 				B: uint8(uint16(fill.B) * uint16(alpha) / 255),
 				A: alpha,
+			})
+		}
+	}
+}
+
+func scaleTextOpacity(text *image.RGBA, opacity uint8) {
+	for y := 0; y < text.Bounds().Dy(); y++ {
+		for x := 0; x < text.Bounds().Dx(); x++ {
+			pixel := text.RGBAAt(x, y)
+			text.SetRGBA(x, y, color.RGBA{
+				R: uint8(uint16(pixel.R) * uint16(opacity) / 255),
+				G: uint8(uint16(pixel.G) * uint16(opacity) / 255),
+				B: uint8(uint16(pixel.B) * uint16(opacity) / 255),
+				A: uint8(uint16(pixel.A) * uint16(opacity) / 255),
 			})
 		}
 	}
