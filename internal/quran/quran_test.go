@@ -338,6 +338,53 @@ func TestAudioURLPaginatesChapterList(t *testing.T) {
 	}
 }
 
+func TestAbsoluteAudioURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		relative string
+		want     string
+	}{
+		{name: "path", relative: "Alafasy/mp3/002001.mp3", want: "https://verses.quran.com/Alafasy/mp3/002001.mp3"},
+		{name: "leading slash", relative: "/Alafasy/mp3/002001.mp3", want: "https://verses.quran.com/Alafasy/mp3/002001.mp3"},
+		{name: "host without scheme", relative: "mirrors.quranicaudio.com/everyayah/Husary_64kbps/002001.mp3", want: "https://mirrors.quranicaudio.com/everyayah/Husary_64kbps/002001.mp3"},
+		{name: "absolute", relative: "https://example.com/audio.mp3", want: "https://example.com/audio.mp3"},
+		{name: "empty", relative: "", want: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := absoluteAudioURL(test.relative); got != test.want {
+				t.Errorf("absoluteAudioURL(%q) = %q, want %q", test.relative, got, test.want)
+			}
+		})
+	}
+}
+
+func TestReciterNamesIncludeStyle(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != pathRecitations {
+			http.NotFound(w, request)
+			return
+		}
+		_, _ = w.Write([]byte(`{"recitations":[{"id":1,"reciter_name":"AbdulBaset AbdulSamad","style":"Mujawwad","translated_name":{"name":"AbdulBaset AbdulSamad"}},{"id":12,"reciter_name":"Mahmoud Khalil Al-Husary","style":"Muallim","translated_name":{"name":"Mahmoud Khalil Al-Husary (Muallim)"}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	client := newClient(server.URL, t.TempDir(), server.Client())
+	client.attempts = 1
+	reciters, err := client.Reciters(context.Background())
+	if err != nil {
+		t.Fatalf("Reciters: %v", err)
+	}
+	if len(reciters) != 2 {
+		t.Fatalf("reciter count = %d, want 2", len(reciters))
+	}
+	if reciters[0].Name != "AbdulBaset AbdulSamad (Mujawwad)" {
+		t.Errorf("reciter 1 name = %q", reciters[0].Name)
+	}
+	if reciters[1].Name != "Mahmoud Khalil Al-Husary (Muallim)" {
+		t.Errorf("reciter 12 name = %q", reciters[1].Name)
+	}
+}
+
 func TestAudioURLFallsBackToAyahEndpoint(t *testing.T) {
 	var ayahRequests, chapterRequests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {

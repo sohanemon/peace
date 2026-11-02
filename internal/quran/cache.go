@@ -11,6 +11,7 @@ import (
 const (
 	resourceCacheTTL = 30 * 24 * time.Hour
 	surahCacheTTL    = 30 * 24 * time.Hour
+	recitersCacheKey = "reciters-v2"
 )
 
 func cachePath(dir, key string) string {

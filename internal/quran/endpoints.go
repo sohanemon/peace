@@ -52,8 +52,20 @@ func chapterAudioPath(recitationID, surah int) string {
 }
 
 func absoluteAudioURL(relative string) string {
+	relative = strings.TrimSpace(relative)
 	if relative == "" || strings.HasPrefix(relative, "http://") || strings.HasPrefix(relative, "https://") {
 		return relative
 	}
-	return strings.TrimRight(audioBaseURL, "/") + "/" + strings.TrimLeft(relative, "/")
+	trimmed := strings.TrimLeft(relative, "/")
+	firstSegment := trimmed
+	if slash := strings.IndexByte(trimmed, '/'); slash >= 0 {
+		firstSegment = trimmed[:slash]
+	}
+	// NOTE: Some Quran.com audio entries already include a host without a
+	// scheme (for example mirrors.quranicaudio.com/everyayah/...). Prefix those
+	// directly instead of sending them through verses.quran.com.
+	if strings.Contains(firstSegment, ".") {
+		return "https://" + trimmed
+	}
+	return strings.TrimRight(audioBaseURL, "/") + "/" + trimmed
 }

@@ -409,7 +409,7 @@ func (c *Client) Reciters(ctx context.Context) ([]Reciter, error) {
 	}
 	c.mu.Unlock()
 	var cached []Reciter
-	if loadCache(c.cacheDir, "reciters", resourceCacheTTL, &cached) && len(cached) > 0 {
+	if loadCache(c.cacheDir, recitersCacheKey, resourceCacheTTL, &cached) && len(cached) > 0 {
 		c.storeReciters(cached)
 		return cached, nil
 	}
@@ -432,12 +432,19 @@ func (c *Client) Reciters(ctx context.Context) ([]Reciter, error) {
 		if name == "" {
 			name = recitation.ReciterName
 		}
+		style := ""
+		if recitation.Style != nil {
+			style = strings.TrimSpace(*recitation.Style)
+		}
+		if style != "" && !strings.Contains(strings.ToLower(name), strings.ToLower(style)) {
+			name += " (" + style + ")"
+		}
 		slugSource := recitation.ReciterName
 		if slugSource == "" {
 			slugSource = name
 		}
-		if recitation.Style != nil && *recitation.Style != "" {
-			slugSource += " " + *recitation.Style
+		if style != "" {
+			slugSource += " " + style
 		}
 		reciters = append(reciters, Reciter{
 			ID:       strconv.Itoa(recitation.ID),
@@ -454,7 +461,7 @@ func (c *Client) Reciters(ctx context.Context) ([]Reciter, error) {
 		right, _ := strconv.Atoi(reciters[second].ID)
 		return left < right
 	})
-	if err := saveCache(c.cacheDir, "reciters", reciters); err != nil {
+	if err := saveCache(c.cacheDir, recitersCacheKey, reciters); err != nil {
 		return nil, err
 	}
 	c.storeReciters(reciters)
