@@ -19,11 +19,48 @@ type wallpaperOptions struct {
 	Action      string
 	Random      bool
 	Translation string
+	WBWLanguage string
 	Render      RenderOptions
 }
 
 func (r Runtime) wallpaper(options wallpaperOptions) error {
 	if r.pidAlive(r.followingFile()) {
+		if options.Action == "current" {
+			if data, err := os.ReadFile(filepath.Join(r.Config.StateDir, "displayed-ayah")); err == nil {
+				parts := strings.Split(strings.TrimSpace(string(data)), "-")
+				if len(parts) == 2 {
+					surah, _ := strconv.Atoi(parts[0])
+					ayah, _ := strconv.Atoi(parts[1])
+					if surah > 0 && ayah > 0 {
+						client := quran.New(r.Config.CacheDir)
+						ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+						defer cancel()
+						cache := filepath.Join(r.Config.CacheDir, "follow")
+						baseImage := ""
+						if src, err := os.ReadFile(filepath.Join(cache, "base-source")); err == nil {
+							baseImage = strings.TrimSpace(string(src))
+						}
+						if baseImage == "" {
+							baseImage, _ = r.snapshotBackground(false)
+						}
+						target := followArtifact(cache, surah, ayah, ".png")
+						if entry, err := client.AyahWithWBW(ctx, surah, ayah, options.Translation, options.WBWLanguage); err == nil {
+							entry.Arabic = displayAyahArabic(surah, ayah, entry.Arabic, false)
+							_ = r.renderAyahText(entry, baseImage, target, options.Render)
+							_ = os.Remove(filepath.Join(r.Config.StateDir, "displayed-ayah"))
+							r.displayWallpaper(cache, surah, ayah)
+						}
+						if state, err := r.readState(); err == nil {
+							state.Translation = options.Translation
+							state.WBWLanguage = options.WBWLanguage
+							state.Render = options.Render
+							_ = r.writeState(state)
+						}
+						return nil
+					}
+				}
+			}
+		}
 		fmt.Println("peace: follow is active; skipping wallpaper change")
 		return nil
 	}
@@ -34,7 +71,7 @@ func (r Runtime) wallpaper(options wallpaperOptions) error {
 	client := quran.New(r.Config.CacheDir)
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
-	ayah, err := fetchAyahByAbsolute(ctx, client, absoluteAyah, options.Translation)
+	ayah, err := fetchAyahByAbsolute(ctx, client, absoluteAyah, options.Translation, options.WBWLanguage)
 	if err != nil {
 		return err
 	}
@@ -68,6 +105,16 @@ func (r Runtime) chooseWallpaperAyah(action string) (int, error) {
 	switch action {
 	case "", "wallpaper", "random":
 		return rand.Intn(total) + 1, nil
+	case "current":
+		data, err := os.ReadFile(r.wallpaperStateFile())
+		if err != nil {
+			return 1, nil
+		}
+		current, err := strconv.Atoi(strings.TrimSpace(string(data)))
+		if err != nil || current < 1 || current > total {
+			return 1, nil
+		}
+		return current, nil
 	case "next", "prev":
 		data, err := os.ReadFile(r.wallpaperStateFile())
 		if err != nil {
@@ -86,7 +133,7 @@ func (r Runtime) chooseWallpaperAyah(action string) (int, error) {
 	}
 }
 
-func fetchAyahByAbsolute(ctx context.Context, client *quran.Client, number int, translation string) (quran.Ayah, error) {
+func fetchAyahByAbsolute(ctx context.Context, client *quran.Client, number int, translation, wbwLanguage string) (quran.Ayah, error) {
 	chapters, err := client.Chapters(ctx)
 	if err != nil {
 		return quran.Ayah{}, err
@@ -95,7 +142,7 @@ func fetchAyahByAbsolute(ctx context.Context, client *quran.Client, number int, 
 	if err != nil {
 		return quran.Ayah{}, err
 	}
-	return client.Ayah(ctx, surah, ayah, translation)
+	return client.AyahWithWBW(ctx, surah, ayah, translation, wbwLanguage)
 }
 
 func chapterForAbsolute(chapters []quran.Chapter, number int) (int, int, error) {

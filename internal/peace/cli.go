@@ -4,6 +4,7 @@ package peace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -63,24 +64,29 @@ func newRootCommand(runtime Runtime) *cobra.Command {
 	}
 	root.SetFlagErrorFunc(suggestFlag)
 	root.CompletionOptions.DisableDefaultCmd = true
-	root.PersistentFlags().String("translation", envOrDefault("PEACE_TRANSLATION", quran.DefaultTranslationID), "Translation ID (numeric; legacy IDs such as en.sahih migrate automatically)")
+	root.PersistentFlags().String("translation", "", "Translation ID (numeric; legacy IDs such as en.sahih migrate automatically)")
+	root.PersistentFlags().String("wbw-language", "", "Word-by-word meaning language (for example en, ur, bn)")
 
 	listen := newListenCommand(runtime)
 	root.AddCommand(listen)
 	root.AddCommand(newWordsCommand(runtime))
 	root.AddCommand(newListCommand(runtime, "reciters", "List available reciters"))
 	root.AddCommand(newListCommand(runtime, "translations", "List available translations"))
+	root.AddCommand(newListCommand(runtime, "languages", "List available word-by-word languages"))
+	root.AddCommand(newSettingsCommand(runtime))
 	root.AddCommand(&cobra.Command{Use: "pause", Short: "Pause or resume audio playback", Long: "Toggle pause on the current recitation.", Example: "  peace pause", Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.pause() }})
 	root.AddCommand(&cobra.Command{Use: "stop", Short: "Stop audio playback", Long: "Stop recitation and any pending wallpaper preparation.", Example: "  peace stop", Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.stop() }})
 	root.AddCommand(&cobra.Command{Use: "status", Short: "Show playback status", Long: "Show the current ayah and playback state.", Example: "  peace status", Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.status() }})
 	root.AddCommand(newWallpaperCommand(runtime, "wallpaper", "Set an ayah wallpaper", "  peace wallpaper\n  peace wallpaper next\n  peace wallpaper --random"))
-	for _, action := range []string{"random", "next", "prev"} {
+	for _, action := range []string{"random", "next", "prev", "current"} {
 		action := action
-		short := map[string]string{"random": "Set a random ayah wallpaper", "next": "Show the next ayah wallpaper", "prev": "Show the previous ayah wallpaper"}[action]
+		short := map[string]string{"random": "Set a random ayah wallpaper", "next": "Show the next ayah wallpaper", "prev": "Show the previous ayah wallpaper", "current": "Re-render the current ayah wallpaper"}[action]
 		cmd := &cobra.Command{Use: action, Short: short, Long: short + ".", Example: "  peace " + action, Args: noArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 			return runtime.wallpaper(wallpaperOptions{
 				Action: action, Random: flagBool(cmd, "random"),
-				Translation: flagString(cmd, "translation"), Render: wallpaperRenderOptions(cmd),
+				Translation: resolveTranslation(cmd, runtime),
+				WBWLanguage: resolveWBWLanguage(cmd, runtime),
+				Render:      wallpaperRenderOptions(cmd),
 			})
 		}}
 		addWallpaperFlags(cmd)
@@ -172,8 +178,13 @@ func newListenCommand(runtime Runtime) *cobra.Command {
 			if !safeID(options.Reciter) {
 				return &cliUsageError{err: errors.New("peace listen: invalid reciter ID (example: --reciter 7; run `peace reciters`)")}
 			}
-			if translation := flagString(cmd, "translation"); !safeID(translation) {
+			options.Translation = resolveTranslation(cmd, runtime)
+			options.WBWLanguage = resolveWBWLanguage(cmd, runtime)
+			if !safeID(options.Translation) {
 				return &cliUsageError{err: errors.New("peace listen: invalid translation ID (example: --translation 20; run `peace translations`)")}
+			}
+			if !safeID(options.WBWLanguage) {
+				return &cliUsageError{err: errors.New("peace listen: invalid word-by-word language (example: --wbw-language ur; run `peace languages`)")}
 			}
 			if options.Random && !options.Follow {
 				return &cliUsageError{err: errors.New("peace listen: --random requires --follow (example: peace listen 110 --follow --random)")}
@@ -182,10 +193,12 @@ func newListenCommand(runtime Runtime) *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			options.Reference = args[0]
-			options.Translation = flagString(cmd, "translation")
+			options.Translation = resolveTranslation(cmd, runtime)
+			options.WBWLanguage = resolveWBWLanguage(cmd, runtime)
 			return runtime.listenOptions(options)
 		},
 	}
+	cmd.Flags().StringVar(&options.WBWLanguage, "wbw-language", "", "Word-by-word meaning language")
 	cmd.Flags().BoolVar(&options.Follow, "follow", false, "Update wallpaper as each ayah plays")
 	cmd.Flags().BoolVar(&options.Random, "random", false, "Shuffle backgrounds between ayahs (requires --follow)")
 	cmd.Flags().BoolVar(&options.Render.UseTheme, "use-theme", false, "Use active Omarchy colors instead of wallpaper-adapted colors")
@@ -201,13 +214,13 @@ func newListenCommand(runtime Runtime) *cobra.Command {
 }
 
 func newWallpaperCommand(runtime Runtime, use, short, example string) *cobra.Command {
-	cmd := &cobra.Command{Use: use + " [random|next|prev]", Short: short, Long: short + ".", Example: example,
+	cmd := &cobra.Command{Use: use + " [random|next|prev|current]", Short: short, Long: short + ".", Example: example,
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) > 1 {
 				return &cliUsageError{err: fmt.Errorf("peace wallpaper: expected at most one action, got %d", len(args))}
 			}
-			if len(args) == 1 && args[0] != "random" && args[0] != "next" && args[0] != "prev" {
-				return &cliUsageError{err: fmt.Errorf("peace wallpaper: invalid action %q (expected random, next, or prev; example: peace wallpaper next)", args[0])}
+			if len(args) == 1 && args[0] != "random" && args[0] != "next" && args[0] != "prev" && args[0] != "current" {
+				return &cliUsageError{err: fmt.Errorf("peace wallpaper: invalid action %q (expected random, next, prev, or current; example: peace wallpaper next)", args[0])}
 			}
 			return nil
 		},
@@ -218,7 +231,9 @@ func newWallpaperCommand(runtime Runtime, use, short, example string) *cobra.Com
 			}
 			return runtime.wallpaper(wallpaperOptions{
 				Action: action, Random: flagBool(cmd, "random"),
-				Translation: flagString(cmd, "translation"), Render: wallpaperRenderOptions(cmd),
+				Translation: resolveTranslation(cmd, runtime),
+				WBWLanguage: resolveWBWLanguage(cmd, runtime),
+				Render:      wallpaperRenderOptions(cmd),
 			})
 		}}
 	addWallpaperFlags(cmd)
@@ -231,6 +246,7 @@ func addWallpaperFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("show-translation", true, "Show the ayah translation")
 	cmd.Flags().Bool("show-word-translation", false, "Show word-by-word meanings")
 	cmd.Flags().Bool("show-reference", true, "Show the surah and ayah reference")
+	cmd.Flags().String("wbw-language", "", "Word-by-word meaning language")
 }
 
 func wallpaperRenderOptions(cmd *cobra.Command) RenderOptions {
@@ -259,12 +275,36 @@ func envOrDefault(name, fallback string) string {
 	return fallback
 }
 
+func resolveTranslation(cmd *cobra.Command, runtime Runtime) string {
+	if cmd != nil {
+		if val := flagString(cmd, "translation"); val != "" {
+			return val
+		}
+	}
+	if env := os.Getenv("PEACE_TRANSLATION"); env != "" {
+		return env
+	}
+	return runtime.readSettings().Translation
+}
+
+func resolveWBWLanguage(cmd *cobra.Command, runtime Runtime) string {
+	if cmd != nil {
+		if val := flagString(cmd, "wbw-language"); val != "" {
+			return val
+		}
+	}
+	if env := os.Getenv("PEACE_WBW_LANGUAGE"); env != "" {
+		return env
+	}
+	return runtime.readSettings().WBWLanguage
+}
+
 func newWordsCommand(runtime Runtime) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:     "words SURAH:AYAH",
 		Short:   "Show word-by-word Arabic, transliteration, and meaning",
 		Long:    "Print each word of one ayah with its Arabic text, transliteration, and English meaning.",
-		Example: "  peace words 2:255\n  peace words 2:255 --translation 20",
+		Example: "  peace words 2:255\n  peace words 2:255 --translation 20\n  peace words 2:255 --wbw-language ur",
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return &cliUsageError{err: errors.New("peace words: ayah reference is required (example: peace words 2:255)")}
@@ -279,7 +319,7 @@ func newWordsCommand(runtime Runtime) *cobra.Command {
 			client := quran.New(runtime.Config.CacheDir)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			words, err := client.Words(ctx, surah, ayah, flagString(cmd, "translation"))
+			words, err := client.WordsWithWBW(ctx, surah, ayah, resolveTranslation(cmd, runtime), resolveWBWLanguage(cmd, runtime))
 			if err != nil {
 				return fmt.Errorf("peace words: %w", err)
 			}
@@ -291,6 +331,8 @@ func newWordsCommand(runtime Runtime) *cobra.Command {
 			return output.Flush()
 		},
 	}
+	cmd.Flags().String("wbw-language", "", "Word-by-word meaning language (for example en, ur, bn)")
+	return cmd
 }
 
 func parseSingleAyah(reference string) (int, int, error) {
@@ -313,36 +355,112 @@ func newListCommand(runtime Runtime, name, short string) *cobra.Command {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			language := flagString(cmd, "lang")
-			output := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			_, _ = fmt.Fprintln(output, "ID\tNAME\tLANGUAGE")
 			switch name {
 			case "reciters":
 				reciters, listErr := client.Reciters(ctx)
 				if listErr != nil {
 					return fmt.Errorf("peace reciters: %w", listErr)
 				}
+				if flagBool(cmd, "json") {
+					data, _ := json.Marshal(reciters)
+					_, _ = cmd.OutOrStdout().Write(data)
+					_, _ = cmd.OutOrStdout().Write([]byte("\n"))
+					return nil
+				}
+				output := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+				_, _ = fmt.Fprintln(output, "ID\tNAME\tLANGUAGE")
 				for _, reciter := range reciters {
 					if languageMatches(reciter.Language, language) {
 						_, _ = fmt.Fprintf(output, "%s\t%s\t%s\n", reciter.ID, reciter.Name, reciter.Language)
 					}
 				}
+				return output.Flush()
 			case "translations":
 				translations, listErr := client.Translations(ctx)
 				if listErr != nil {
 					return fmt.Errorf("peace translations: %w", listErr)
 				}
+				if flagBool(cmd, "json") {
+					data, _ := json.Marshal(translations)
+					_, _ = cmd.OutOrStdout().Write(data)
+					_, _ = cmd.OutOrStdout().Write([]byte("\n"))
+					return nil
+				}
+				output := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+				_, _ = fmt.Fprintln(output, "ID\tNAME\tLANGUAGE")
 				for _, translation := range translations {
 					if languageMatches(translation.Language, language) {
 						_, _ = fmt.Fprintf(output, "%s\t%s\t%s\n", translation.ID, translation.Name, translation.Language)
 					}
 				}
+				return output.Flush()
+			case "languages":
+				languages, listErr := client.WBWLanguages(ctx)
+				if listErr != nil {
+					return fmt.Errorf("peace languages: %w", listErr)
+				}
+				if flagBool(cmd, "json") {
+					data, _ := json.Marshal(languages)
+					_, _ = cmd.OutOrStdout().Write(data)
+					_, _ = cmd.OutOrStdout().Write([]byte("\n"))
+					return nil
+				}
+				output := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+				_, _ = fmt.Fprintln(output, "CODE\tNAME\tNATIVE")
+				for _, lang := range languages {
+					if languageMatches(lang.Name, language) || languageMatches(lang.ISOCode, language) {
+						_, _ = fmt.Fprintf(output, "%s\t%s\t%s\n", lang.ISOCode, lang.Name, lang.NativeName)
+					}
+				}
+				return output.Flush()
 			default:
 				return fmt.Errorf("peace: unknown list %q", name)
 			}
-			return output.Flush()
 		},
 	}
 	cmd.Flags().String("lang", "", "Filter by language (for example en, arabic, or urdu)")
+	cmd.Flags().Bool("json", false, "Output results as JSON")
+	return cmd
+}
+
+func newSettingsCommand(runtime Runtime) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "settings",
+		Short:   "View or update persistent peace settings",
+		Long:    "Show current settings or update translation and word-by-word language.",
+		Example: "  peace settings\n  peace settings --translation 131\n  peace settings --wbw-language ur",
+		Args:    noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			tr := flagString(cmd, "translation")
+			wbw := flagString(cmd, "wbw-language")
+			if tr != "" || wbw != "" {
+				updated, err := runtime.updateSettings(tr, wbw)
+				if err != nil {
+					return fmt.Errorf("peace settings: %w", err)
+				}
+				if flagBool(cmd, "json") {
+					data, _ := json.Marshal(updated)
+					_, _ = cmd.OutOrStdout().Write(data)
+					_, _ = cmd.OutOrStdout().Write([]byte("\n"))
+					return nil
+				}
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "translation: %s\nwbw_language: %s\n", updated.Translation, updated.WBWLanguage)
+				return nil
+			}
+			current := runtime.readSettings()
+			if flagBool(cmd, "json") {
+				data, _ := json.Marshal(current)
+				_, _ = cmd.OutOrStdout().Write(data)
+				_, _ = cmd.OutOrStdout().Write([]byte("\n"))
+				return nil
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "translation: %s\nwbw_language: %s\n", current.Translation, current.WBWLanguage)
+			return nil
+		},
+	}
+	cmd.Flags().String("translation", "", "Set translation ID")
+	cmd.Flags().String("wbw-language", "", "Set word-by-word meaning language")
+	cmd.Flags().Bool("json", false, "Output settings as JSON")
 	return cmd
 }
 

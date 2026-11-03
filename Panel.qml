@@ -28,6 +28,126 @@ Panel {
   property bool showWordTranslation: false
   property bool showReference: true
   property bool useThemeColors: false
+  property var settings: hostWidget && hostWidget.settings ? hostWidget.settings : null
+  property string selectedTranslation: {
+    if (settings && settings.translation) return String(settings.translation)
+    return "20"
+  }
+  property string selectedWBWLanguage: {
+    if (settings && settings.wbwLanguage) return String(settings.wbwLanguage)
+    return "en"
+  }
+
+  property bool translationPickerOpen: false
+  property var allTranslations: []
+  property bool translationsLoaded: false
+  property bool translationsLoading: false
+  property string translationsError: ""
+  property string translationSearchQuery: ""
+
+  property bool wbwPickerOpen: false
+  property var allWBWLanguages: []
+  property bool wbwLanguagesLoaded: false
+  property bool wbwLanguagesLoading: false
+  property string wbwLanguagesError: ""
+  property string wbwSearchQuery: ""
+
+  readonly property string userLanguage: {
+    var langStr = String(Quickshell.env("LC_ALL") || Quickshell.env("LANG") || "").toLowerCase()
+    var base = langStr.split(".")[0].split("_")[0]
+    return base || "en"
+  }
+
+  readonly property var filteredTranslations: {
+    var q = translationSearchQuery.toLowerCase()
+    var items = allTranslations || []
+    var matched = []
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i]
+      if (!q) {
+        matched.push(item)
+        continue
+      }
+      var name = String(item.name || "").toLowerCase()
+      var author = String(item.author || "").toLowerCase()
+      var lang = String(item.language || "").toLowerCase()
+      if (name.indexOf(q) !== -1 || author.indexOf(q) !== -1 || lang.indexOf(q) !== -1) {
+        matched.push(item)
+      }
+    }
+
+    var userLang = userLanguage
+    var userLangName = ""
+    if (userLang === "en") userLangName = "english"
+    else if (userLang === "ur") userLangName = "urdu"
+    else if (userLang === "bn") userLangName = "bengali"
+    else if (userLang === "tr") userLangName = "turkish"
+    else if (userLang === "id") userLangName = "indonesian"
+    else if (userLang === "fa") userLangName = "persian"
+    else if (userLang === "ar") userLangName = "arabic"
+    else if (userLang === "fr") userLangName = "french"
+    else if (userLang === "es") userLangName = "spanish"
+    else if (userLang === "de") userLangName = "german"
+    else if (userLang === "ru") userLangName = "russian"
+    else if (userLang === "hi") userLangName = "hindi"
+
+    matched.sort(function(a, b) {
+      var langA = String(a.language || "").toLowerCase()
+      var langB = String(b.language || "").toLowerCase()
+
+      var rankA = 2
+      var rankB = 2
+      if (userLangName && langA === userLangName) rankA = 0
+      else if (langA === "english") rankA = 1
+
+      if (userLangName && langB === userLangName) rankB = 0
+      else if (langB === "english") rankB = 1
+
+      if (rankA !== rankB) return rankA - rankB
+      if (langA !== langB) return langA.localeCompare(langB)
+      return String(a.name || "").localeCompare(String(b.name || ""))
+    })
+    return matched
+  }
+
+  readonly property var filteredWBWLanguages: {
+    var q = wbwSearchQuery.toLowerCase()
+    var items = allWBWLanguages || []
+    var matched = []
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i]
+      if (!q) {
+        matched.push(item)
+        continue
+      }
+      var name = String(item.name || "").toLowerCase()
+      var nativeName = String(item.native_name || "").toLowerCase()
+      var code = String(item.iso_code || "").toLowerCase()
+      if (name.indexOf(q) !== -1 || nativeName.indexOf(q) !== -1 || code.indexOf(q) !== -1) {
+        matched.push(item)
+      }
+    }
+    return matched
+  }
+
+  readonly property string selectedTranslationName: {
+    for (var i = 0; i < allTranslations.length; i++) {
+      if (String(allTranslations[i].id) === selectedTranslation) {
+        return allTranslations[i].name
+      }
+    }
+    return "ID " + selectedTranslation
+  }
+
+  readonly property string selectedWBWLanguageName: {
+    for (var i = 0; i < allWBWLanguages.length; i++) {
+      if (String(allWBWLanguages[i].iso_code) === selectedWBWLanguage) {
+        return allWBWLanguages[i].name
+      }
+    }
+    return selectedWBWLanguage.toUpperCase()
+  }
+
   property string reciterID: "7"
   property var reciterOptions: [{
     "value": "7",
@@ -105,10 +225,102 @@ Panel {
     refreshStatus()
     refreshArtwork()
     refreshReciters()
+    refreshTranslations()
+    refreshWBWLanguages()
+    loadSettings()
   }
 
   function close() {
+    root.closePickers()
     root.controller.hide()
+  }
+
+  function openTranslationPicker() {
+    root.wbwPickerOpen = false
+    root.translationPickerOpen = true
+    root.translationSearchQuery = ""
+    if (root.allTranslations.length === 0) {
+      root.refreshTranslations()
+    }
+    Qt.callLater(function() {
+      if (translationSearchField)
+        translationSearchField.forceActiveFocus()
+    })
+  }
+
+  function openWBWPicker() {
+    root.translationPickerOpen = false
+    root.wbwPickerOpen = true
+    root.wbwSearchQuery = ""
+    if (root.allWBWLanguages.length === 0) {
+      root.refreshWBWLanguages()
+    }
+    Qt.callLater(function() {
+      if (wbwSearchField)
+        wbwSearchField.forceActiveFocus()
+    })
+  }
+
+  function closePickers() {
+    root.translationPickerOpen = false
+    root.wbwPickerOpen = false
+    keyCatcher.forceActiveFocus()
+  }
+
+  function persistSettings(newTranslation, newWbwLang) {
+    if (newTranslation !== undefined && newTranslation !== null && String(newTranslation) !== "") {
+      root.selectedTranslation = String(newTranslation)
+    }
+    if (newWbwLang !== undefined && newWbwLang !== null && String(newWbwLang) !== "") {
+      root.selectedWBWLanguage = String(newWbwLang)
+    }
+    if (root.bar && root.bar.shell) {
+      var next = {}
+      if (root.settings) {
+        for (var k in root.settings) if (k !== "id") next[k] = root.settings[k]
+      }
+      next.translation = root.selectedTranslation
+      next.wbwLanguage = root.selectedWBWLanguage
+      root.bar.shell.updateEntryInline(root.moduleName, next)
+      if (root.hostWidget) root.hostWidget.settings = next
+    }
+    root.runPeace(["settings", "--translation=" + root.selectedTranslation, "--wbw-language=" + root.selectedWBWLanguage])
+    root.reRenderWallpaper()
+  }
+
+  function reRenderWallpaper() {
+    root.runPeace([
+      "wallpaper", "current",
+      "--translation=" + root.selectedTranslation,
+      "--wbw-language=" + root.selectedWBWLanguage,
+      "--show-translation=" + String(root.showTranslation),
+      "--show-word-translation=" + String(root.showWordTranslation),
+      "--show-reference=" + String(root.showReference)
+    ])
+    statusRefreshTimer.restart()
+    artworkRefreshTimer.restart()
+  }
+
+  function refreshTranslations() {
+    if (!root.translationsLoading && !translationsProcess.running) {
+      root.translationsLoading = true
+      root.translationsError = ""
+      translationsProcess.running = true
+    }
+  }
+
+  function refreshWBWLanguages() {
+    if (!root.wbwLanguagesLoading && !wbwLanguagesProcess.running) {
+      root.wbwLanguagesLoading = true
+      root.wbwLanguagesError = ""
+      wbwLanguagesProcess.running = true
+    }
+  }
+
+  function loadSettings() {
+    if (!settingsLoadProcess.running) {
+      settingsLoadProcess.running = true
+    }
   }
 
   function toggle() {
@@ -173,6 +385,54 @@ Panel {
     }
   }
 
+  function loadTranslationsJson(text) {
+    try {
+      var data = JSON.parse(text)
+      if (Array.isArray(data) && data.length > 0) {
+        root.allTranslations = data
+        root.translationsLoaded = true
+        root.translationsError = ""
+      }
+    } catch (e) {
+      console.warn("Failed to parse translations JSON:", e)
+      root.translationsError = "Failed to parse translations"
+    } finally {
+      root.translationsLoading = false
+    }
+  }
+
+  function loadWBWLanguagesJson(text) {
+    try {
+      var data = JSON.parse(text)
+      if (Array.isArray(data) && data.length > 0) {
+        root.allWBWLanguages = data
+        root.wbwLanguagesLoaded = true
+        root.wbwLanguagesError = ""
+      }
+    } catch (e) {
+      console.warn("Failed to parse WBW languages JSON:", e)
+      root.wbwLanguagesError = "Failed to parse languages"
+    } finally {
+      root.wbwLanguagesLoading = false
+    }
+  }
+
+  function applyLoadedSettingsJson(text) {
+    try {
+      var data = JSON.parse(text)
+      if (data && typeof data === "object") {
+        if (data.translation && (!root.settings || !root.settings.translation)) {
+          root.selectedTranslation = String(data.translation)
+        }
+        if (data.wbw_language && (!root.settings || !root.settings.wbwLanguage)) {
+          root.selectedWBWLanguage = String(data.wbw_language)
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
   function refreshArtwork() {
     if (!artworkCaptured && !artworkPathProcess.running && !baseArtworkProcess.running)
       artworkPathProcess.running = true
@@ -215,8 +475,14 @@ Panel {
       id: keyCatcher
 
       anchors.fill: parent
-      blocked: referenceInput.activeFocus || reciterInput.popupOpen || basmalaToggle.activeFocus || followToggle.activeFocus || randomBackgroundToggle.activeFocus || translationToggle.activeFocus || wordTranslationToggle.activeFocus || referenceToggle.activeFocus || themeColorsToggle.activeFocus
-      onCloseRequested: root.close()
+      blocked: referenceInput.activeFocus || reciterInput.popupOpen || basmalaToggle.activeFocus || followToggle.activeFocus || randomBackgroundToggle.activeFocus || translationToggle.activeFocus || wordTranslationToggle.activeFocus || referenceToggle.activeFocus || themeColorsToggle.activeFocus || translationGearBtn.activeFocus || wordTranslationGearBtn.activeFocus || root.translationPickerOpen || root.wbwPickerOpen
+      onCloseRequested: {
+        if (root.translationPickerOpen || root.wbwPickerOpen) {
+          root.closePickers()
+        } else {
+          root.close()
+        }
+      }
 
       Column {
         id: content
@@ -377,6 +643,8 @@ Panel {
                   args.push("--show-translation=" + String(root.showTranslation))
                   args.push("--show-word-translation=" + String(root.showWordTranslation))
                   args.push("--show-reference=" + String(root.showReference))
+                  args.push("--translation=" + root.selectedTranslation)
+                  args.push("--wbw-language=" + root.selectedWBWLanguage)
                   if (root.useThemeColors)
                     args.push("--use-theme")
                   if (root.followEnabled) {
@@ -428,7 +696,14 @@ Panel {
               tooltipText: "Show the next ayah wallpaper"
               Accessible.name: "Show the next ayah wallpaper"
               bordered: true
-              onClicked: root.runPeace(["wallpaper", "next"])
+              onClicked: root.runPeace([
+                "wallpaper", "next",
+                "--translation=" + root.selectedTranslation,
+                "--wbw-language=" + root.selectedWBWLanguage,
+                "--show-translation=" + String(root.showTranslation),
+                "--show-word-translation=" + String(root.showWordTranslation),
+                "--show-reference=" + String(root.showReference)
+              ])
             }
 
           }
@@ -662,32 +937,76 @@ Panel {
                   onClicked: root.randomBackground = !root.randomBackground
                 }
 
-                Toggle {
-                  id: translationToggle
-
+                Row {
                   width: parent.width
-                  label: "Show translation"
-                  description: "Display the ayah translation"
-                  titleSize: Style.font.bodySmall
-                  checked: root.showTranslation
-                  color: translationToggle.activeFocus ? Style.focusFillFor(root.foreground, Color.accent) : "transparent"
-                  borderSpec: Border.none()
-                  Accessible.name: "Show ayah translation"
-                  onClicked: root.showTranslation = !root.showTranslation
+                  spacing: Style.space(6)
+
+                  Toggle {
+                    id: translationToggle
+
+                    width: parent.width - translationGearBtn.width - parent.spacing
+                    label: "Show translation"
+                    description: "Display the ayah translation"
+                    titleSize: Style.font.bodySmall
+                    checked: root.showTranslation
+                    color: translationToggle.activeFocus ? Style.focusFillFor(root.foreground, Color.accent) : "transparent"
+                    borderSpec: Border.none()
+                    Accessible.name: "Show ayah translation"
+                    onClicked: root.showTranslation = !root.showTranslation
+                  }
+
+                  Button {
+                    id: translationGearBtn
+
+                    width: Style.space(38)
+                    height: Style.space(38)
+                    anchors.verticalCenter: parent.verticalCenter
+                    iconText: "󰒓"
+                    iconSize: Style.font.icon
+                    bordered: true
+                    focusable: enabled
+                    enabled: root.showTranslation
+                    opacity: enabled ? 1.0 : 0.35
+                    tooltipText: enabled ? "Choose translation (" + root.selectedTranslationName + ")" : "Enable translation to configure"
+                    Accessible.name: "Choose translation"
+                    onClicked: root.openTranslationPicker()
+                  }
                 }
 
-                Toggle {
-                  id: wordTranslationToggle
-
+                Row {
                   width: parent.width
-                  label: "Show word meanings"
-                  description: "Display word-by-word translations"
-                  titleSize: Style.font.bodySmall
-                  checked: root.showWordTranslation
-                  color: wordTranslationToggle.activeFocus ? Style.focusFillFor(root.foreground, Color.accent) : "transparent"
-                  borderSpec: Border.none()
-                  Accessible.name: "Show word-by-word translations"
-                  onClicked: root.showWordTranslation = !root.showWordTranslation
+                  spacing: Style.space(6)
+
+                  Toggle {
+                    id: wordTranslationToggle
+
+                    width: parent.width - wordTranslationGearBtn.width - parent.spacing
+                    label: "Show word meanings"
+                    description: "Display word-by-word translations"
+                    titleSize: Style.font.bodySmall
+                    checked: root.showWordTranslation
+                    color: wordTranslationToggle.activeFocus ? Style.focusFillFor(root.foreground, Color.accent) : "transparent"
+                    borderSpec: Border.none()
+                    Accessible.name: "Show word-by-word translations"
+                    onClicked: root.showWordTranslation = !root.showWordTranslation
+                  }
+
+                  Button {
+                    id: wordTranslationGearBtn
+
+                    width: Style.space(38)
+                    height: Style.space(38)
+                    anchors.verticalCenter: parent.verticalCenter
+                    iconText: "󰒓"
+                    iconSize: Style.font.icon
+                    bordered: true
+                    focusable: enabled
+                    enabled: root.showWordTranslation
+                    opacity: enabled ? 1.0 : 0.35
+                    tooltipText: enabled ? "Choose word-by-word language (" + root.selectedWBWLanguageName + ")" : "Enable word meanings to configure"
+                    Accessible.name: "Choose word-by-word language"
+                    onClicked: root.openWBWPicker()
+                  }
                 }
 
                 Toggle {
@@ -742,6 +1061,651 @@ Panel {
 
         }
 
+      }
+
+      Item {
+        id: pickerOverlay
+
+        anchors.fill: parent
+        visible: root.translationPickerOpen || root.wbwPickerOpen
+        z: 100
+
+        Rectangle {
+          anchors.fill: parent
+          color: Qt.rgba(0, 0, 0, 0.72)
+          radius: Style.cornerRadius
+
+          MouseArea {
+            anchors.fill: parent
+            onClicked: root.closePickers()
+          }
+        }
+
+        BorderSurface {
+          id: translationPickerCard
+
+          visible: root.translationPickerOpen
+          anchors.fill: parent
+          anchors.margins: Style.space(12)
+          radius: Style.cornerRadius
+          color: Commons.Color.popups.background
+          borderSpec: Border.localOrSurfaceSpec("popups", "border", Commons.Color.popups.border, Commons.Color.popups.border, Style.normalBorderWidth)
+          clip: true
+
+          MouseArea {
+            anchors.fill: parent
+          }
+
+          Item {
+            anchors.fill: parent
+            anchors.margins: Style.space(14)
+
+            Row {
+              id: translationHeaderRow
+
+              anchors.top: parent.top
+              anchors.left: parent.left
+              anchors.right: parent.right
+              height: Style.space(32)
+
+              Column {
+                width: parent.width - closeTranslationBtn.width - parent.spacing
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(2)
+
+                Text {
+                  width: parent.width
+                  text: "Select Translation"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.heading
+                  font.bold: true
+                  elide: Text.ElideRight
+                }
+
+                Text {
+                  width: parent.width
+                  text: root.filteredTranslations.length + " available"
+                  color: Qt.darker(root.foreground, 1.4)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+              }
+
+              Button {
+                id: closeTranslationBtn
+
+                width: Style.space(32)
+                height: Style.space(32)
+                anchors.verticalCenter: parent.verticalCenter
+                iconText: "󰅖"
+                iconSize: Style.font.icon
+                tooltipText: "Close (Esc)"
+                Accessible.name: "Close translation picker"
+                onClicked: root.closePickers()
+              }
+            }
+
+            TextField {
+              id: translationSearchField
+
+              anchors.top: translationHeaderRow.bottom
+              anchors.topMargin: Style.space(10)
+              anchors.left: parent.left
+              anchors.right: parent.right
+              height: Style.spacing.controlHeight
+              placeholderText: "Search name, author, or language..."
+              foreground: root.foreground
+              accent: Color.accent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              selectByMouse: true
+              text: root.translationSearchQuery
+              onTextChanged: root.translationSearchQuery = text
+
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Escape) {
+                  root.closePickers()
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Down) {
+                  if (translationListView.count > 0) {
+                    translationListView.currentIndex = 0
+                    translationListView.forceActiveFocus()
+                  }
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                  if (translationListView.count > 0 && translationListView.currentIndex >= 0) {
+                    var item = root.filteredTranslations[translationListView.currentIndex]
+                    if (item) {
+                      root.persistSettings(item.id, null)
+                      root.closePickers()
+                    }
+                  }
+                  event.accepted = true
+                }
+              }
+            }
+
+            PanelSeparator {
+              id: translationSep
+
+              anchors.top: translationSearchField.bottom
+              anchors.topMargin: Style.space(10)
+              anchors.left: parent.left
+              anchors.right: parent.right
+              foreground: root.foreground
+              strength: 0.1
+            }
+
+            BorderSurface {
+              id: translationErrorBanner
+
+              visible: root.translationsError !== ""
+              anchors.top: translationSep.bottom
+              anchors.topMargin: Style.space(6)
+              anchors.left: parent.left
+              anchors.right: parent.right
+              radius: Style.cornerRadius
+              color: Qt.rgba(1, 0.2, 0.2, 0.15)
+              borderSpec: Border.localOrSurfaceSpec("popups", "border", "#ff6b6b", "#ff6b6b", 1)
+              implicitHeight: translationErrText.implicitHeight + Style.space(12)
+
+              Text {
+                id: translationErrText
+
+                anchors.centerIn: parent
+                text: root.translationsError + (root.allTranslations.length > 0 ? " (showing cached)" : "")
+                color: "#ff6b6b"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+
+            Column {
+              anchors.centerIn: parent
+              spacing: Style.space(8)
+              visible: root.translationsLoading && root.allTranslations.length === 0
+
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "󰑐"
+                font.family: root.fontFamily
+                font.pixelSize: Style.space(28)
+                color: Color.accent
+              }
+
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "Loading translations…"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                color: Qt.darker(root.foreground, 1.3)
+              }
+            }
+
+            Text {
+              anchors.centerIn: parent
+              visible: !root.translationsLoading && root.filteredTranslations.length === 0 && root.translationsError === ""
+              text: "No translations found matching \"" + root.translationSearchQuery + "\""
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              color: Qt.darker(root.foreground, 1.4)
+              wrapMode: Text.WordWrap
+              horizontalAlignment: Text.AlignHCenter
+              width: parent.width - Style.space(32)
+            }
+
+            ListView {
+              id: translationListView
+
+              anchors.top: translationErrorBanner.visible ? translationErrorBanner.bottom : translationSep.bottom
+              anchors.topMargin: translationErrorBanner.visible ? Style.space(6) : Style.space(10)
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.bottom: parent.bottom
+              clip: true
+              spacing: Style.space(4)
+              boundsBehavior: Flickable.StopAtBounds
+              model: root.filteredTranslations
+
+              Keys.priority: Keys.BeforeItem
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Escape) {
+                  root.closePickers()
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Down || event.text === "j") {
+                  if (currentIndex < count - 1)
+                    currentIndex++
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Up || event.text === "k") {
+                  if (currentIndex <= 0) {
+                    translationSearchField.forceActiveFocus()
+                  } else {
+                    currentIndex--
+                  }
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                  if (currentIndex >= 0 && currentIndex < count) {
+                    var item = root.filteredTranslations[currentIndex]
+                    if (item) {
+                      root.persistSettings(item.id, null)
+                      root.closePickers()
+                    }
+                  }
+                  event.accepted = true
+                }
+              }
+
+              delegate: BorderSurface {
+                required property var modelData
+                required property int index
+
+                readonly property bool isSelected: String(modelData.id) === root.selectedTranslation
+                readonly property bool isCurrent: index === translationListView.currentIndex
+
+                width: translationListView.width
+                height: Style.space(52)
+                radius: Style.cornerRadius
+                color: isSelected ? Style.selectedFillFor(root.foreground, Color.accent) : (isCurrent || rowMouse.containsMouse ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent")
+                borderSpec: isSelected ? Border.controlSpec("selected", root.foreground, Color.accent) : (isCurrent ? Border.controlSpec("focus", root.foreground, Color.accent) : Border.none())
+
+                Row {
+                  anchors.fill: parent
+                  anchors.leftMargin: Style.space(10)
+                  anchors.rightMargin: Style.space(10)
+                  spacing: Style.space(8)
+
+                  Column {
+                    width: parent.width - badgeRow.width - parent.spacing
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(2)
+
+                    Text {
+                      width: parent.width
+                      text: modelData.name || "Translation " + modelData.id
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      font.bold: isSelected
+                      elide: Text.ElideRight
+                    }
+
+                    Text {
+                      width: parent.width
+                      text: (modelData.author && modelData.author !== modelData.name ? modelData.author + " • " : "") + (modelData.language ? (modelData.language.charAt(0).toUpperCase() + modelData.language.slice(1)) : "")
+                      color: Qt.darker(root.foreground, 1.45)
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideRight
+                    }
+                  }
+
+                  Row {
+                    id: badgeRow
+
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(6)
+
+                    BorderSurface {
+                      implicitWidth: langTagText.implicitWidth + Style.space(10)
+                      implicitHeight: langTagText.implicitHeight + Style.space(6)
+                      anchors.verticalCenter: parent.verticalCenter
+                      radius: Style.space(4)
+                      color: Qt.rgba(1, 1, 1, 0.08)
+                      borderSpec: Border.none()
+
+                      Text {
+                        id: langTagText
+
+                        anchors.centerIn: parent
+                        text: String(modelData.language || "").toUpperCase()
+                        color: Qt.darker(root.foreground, 1.3)
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.space(9)
+                        font.bold: true
+                      }
+                    }
+
+                    Text {
+                      visible: isSelected
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: "󰄬"
+                      color: Color.accent
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.icon
+                    }
+                  }
+                }
+
+                MouseArea {
+                  id: rowMouse
+
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onPositionChanged: translationListView.currentIndex = parent.index
+                  onClicked: {
+                    root.persistSettings(modelData.id, null)
+                    root.closePickers()
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        BorderSurface {
+          id: wbwPickerCard
+
+          visible: root.wbwPickerOpen
+          anchors.fill: parent
+          anchors.margins: Style.space(12)
+          radius: Style.cornerRadius
+          color: Commons.Color.popups.background
+          borderSpec: Border.localOrSurfaceSpec("popups", "border", Commons.Color.popups.border, Commons.Color.popups.border, Style.normalBorderWidth)
+          clip: true
+
+          MouseArea {
+            anchors.fill: parent
+          }
+
+          Item {
+            anchors.fill: parent
+            anchors.margins: Style.space(14)
+
+            Row {
+              id: wbwHeaderRow
+
+              anchors.top: parent.top
+              anchors.left: parent.left
+              anchors.right: parent.right
+              height: Style.space(32)
+
+              Column {
+                width: parent.width - closeWbwBtn.width - parent.spacing
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(2)
+
+                Text {
+                  width: parent.width
+                  text: "Word-by-Word Language"
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.heading
+                  font.bold: true
+                  elide: Text.ElideRight
+                }
+
+                Text {
+                  width: parent.width
+                  text: root.filteredWBWLanguages.length + " verified languages"
+                  color: Qt.darker(root.foreground, 1.4)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+              }
+
+              Button {
+                id: closeWbwBtn
+
+                width: Style.space(32)
+                height: Style.space(32)
+                anchors.verticalCenter: parent.verticalCenter
+                iconText: "󰅖"
+                iconSize: Style.font.icon
+                tooltipText: "Close (Esc)"
+                Accessible.name: "Close WBW language picker"
+                onClicked: root.closePickers()
+              }
+            }
+
+            TextField {
+              id: wbwSearchField
+
+              anchors.top: wbwHeaderRow.bottom
+              anchors.topMargin: Style.space(10)
+              anchors.left: parent.left
+              anchors.right: parent.right
+              height: Style.spacing.controlHeight
+              placeholderText: "Search language name or code..."
+              foreground: root.foreground
+              accent: Color.accent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              selectByMouse: true
+              text: root.wbwSearchQuery
+              onTextChanged: root.wbwSearchQuery = text
+
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Escape) {
+                  root.closePickers()
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Down) {
+                  if (wbwListView.count > 0) {
+                    wbwListView.currentIndex = 0
+                    wbwListView.forceActiveFocus()
+                  }
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                  if (wbwListView.count > 0 && wbwListView.currentIndex >= 0) {
+                    var item = root.filteredWBWLanguages[wbwListView.currentIndex]
+                    if (item) {
+                      root.persistSettings(null, item.iso_code)
+                      root.closePickers()
+                    }
+                  }
+                  event.accepted = true
+                }
+              }
+            }
+
+            PanelSeparator {
+              id: wbwSep
+
+              anchors.top: wbwSearchField.bottom
+              anchors.topMargin: Style.space(10)
+              anchors.left: parent.left
+              anchors.right: parent.right
+              foreground: root.foreground
+              strength: 0.1
+            }
+
+            BorderSurface {
+              id: wbwErrorBanner
+
+              visible: root.wbwLanguagesError !== ""
+              anchors.top: wbwSep.bottom
+              anchors.topMargin: Style.space(6)
+              anchors.left: parent.left
+              anchors.right: parent.right
+              radius: Style.cornerRadius
+              color: Qt.rgba(1, 0.2, 0.2, 0.15)
+              borderSpec: Border.localOrSurfaceSpec("popups", "border", "#ff6b6b", "#ff6b6b", 1)
+              implicitHeight: wbwErrText.implicitHeight + Style.space(12)
+
+              Text {
+                id: wbwErrText
+
+                anchors.centerIn: parent
+                text: root.wbwLanguagesError + (root.allWBWLanguages.length > 0 ? " (showing cached)" : "")
+                color: "#ff6b6b"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+
+            Column {
+              anchors.centerIn: parent
+              spacing: Style.space(8)
+              visible: root.wbwLanguagesLoading && root.allWBWLanguages.length === 0
+
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "󰑐"
+                font.family: root.fontFamily
+                font.pixelSize: Style.space(28)
+                color: Color.accent
+              }
+
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "Loading languages…"
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                color: Qt.darker(root.foreground, 1.3)
+              }
+            }
+
+            Text {
+              anchors.centerIn: parent
+              visible: !root.wbwLanguagesLoading && root.filteredWBWLanguages.length === 0 && root.wbwLanguagesError === ""
+              text: "No languages found matching \"" + root.wbwSearchQuery + "\""
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              color: Qt.darker(root.foreground, 1.4)
+              wrapMode: Text.WordWrap
+              horizontalAlignment: Text.AlignHCenter
+              width: parent.width - Style.space(32)
+            }
+
+            ListView {
+              id: wbwListView
+
+              anchors.top: wbwErrorBanner.visible ? wbwErrorBanner.bottom : wbwSep.bottom
+              anchors.topMargin: wbwErrorBanner.visible ? Style.space(6) : Style.space(10)
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.bottom: parent.bottom
+              clip: true
+              spacing: Style.space(4)
+              boundsBehavior: Flickable.StopAtBounds
+              model: root.filteredWBWLanguages
+
+              Keys.priority: Keys.BeforeItem
+              Keys.onPressed: function(event) {
+                if (event.key === Qt.Key_Escape) {
+                  root.closePickers()
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Down || event.text === "j") {
+                  if (currentIndex < count - 1)
+                    currentIndex++
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Up || event.text === "k") {
+                  if (currentIndex <= 0) {
+                    wbwSearchField.forceActiveFocus()
+                  } else {
+                    currentIndex--
+                  }
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                  if (currentIndex >= 0 && currentIndex < count) {
+                    var item = root.filteredWBWLanguages[currentIndex]
+                    if (item) {
+                      root.persistSettings(null, item.iso_code)
+                      root.closePickers()
+                    }
+                  }
+                  event.accepted = true
+                }
+              }
+
+              delegate: BorderSurface {
+                required property var modelData
+                required property int index
+
+                readonly property bool isSelected: String(modelData.iso_code) === root.selectedWBWLanguage
+                readonly property bool isCurrent: index === wbwListView.currentIndex
+
+                width: wbwListView.width
+                height: Style.space(48)
+                radius: Style.cornerRadius
+                color: isSelected ? Style.selectedFillFor(root.foreground, Color.accent) : (isCurrent || wbwRowMouse.containsMouse ? Style.hoverFillFor(root.foreground, Color.accent) : "transparent")
+                borderSpec: isSelected ? Border.controlSpec("selected", root.foreground, Color.accent) : (isCurrent ? Border.controlSpec("focus", root.foreground, Color.accent) : Border.none())
+
+                Row {
+                  anchors.fill: parent
+                  anchors.leftMargin: Style.space(10)
+                  anchors.rightMargin: Style.space(10)
+                  spacing: Style.space(8)
+
+                  Column {
+                    width: parent.width - wbwBadgeRow.width - parent.spacing
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(2)
+
+                    Text {
+                      width: parent.width
+                      text: modelData.name || modelData.iso_code
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      font.bold: isSelected
+                      elide: Text.ElideRight
+                    }
+
+                    Text {
+                      width: parent.width
+                      text: (modelData.native_name && modelData.native_name !== modelData.name ? modelData.native_name + " • " : "") + "ISO: " + modelData.iso_code
+                      color: Qt.darker(root.foreground, 1.45)
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideRight
+                    }
+                  }
+
+                  Row {
+                    id: wbwBadgeRow
+
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(6)
+
+                    BorderSurface {
+                      implicitWidth: wbwIsoTagText.implicitWidth + Style.space(10)
+                      implicitHeight: wbwIsoTagText.implicitHeight + Style.space(6)
+                      anchors.verticalCenter: parent.verticalCenter
+                      radius: Style.space(4)
+                      color: Qt.rgba(1, 1, 1, 0.08)
+                      borderSpec: Border.none()
+
+                      Text {
+                        id: wbwIsoTagText
+
+                        anchors.centerIn: parent
+                        text: String(modelData.iso_code || "").toUpperCase()
+                        color: Qt.darker(root.foreground, 1.3)
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.space(9)
+                        font.bold: true
+                      }
+                    }
+
+                    Text {
+                      visible: isSelected
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: "󰄬"
+                      color: Color.accent
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.icon
+                    }
+                  }
+                }
+
+                MouseArea {
+                  id: wbwRowMouse
+
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onPositionChanged: wbwListView.currentIndex = parent.index
+                  onClicked: {
+                    root.persistSettings(null, modelData.iso_code)
+                    root.closePickers()
+                  }
+                }
+              }
+            }
+          }
+        }
       }
 
     }
@@ -858,9 +1822,60 @@ Panel {
     onTriggered: root.refreshStatus()
   }
 
+  Process {
+    id: translationsProcess
+
+    command: [root.peaceExecutable, "translations", "--json"]
+    stdout: StdioCollector {
+      onStreamFinished: root.loadTranslationsJson(text)
+    }
+    onExited: function(exitCode) {
+      root.translationsLoading = false
+      if (exitCode !== 0 && root.allTranslations.length === 0)
+        root.translationsError = "Failed to load translations"
+    }
+  }
+
+  Process {
+    id: wbwLanguagesProcess
+
+    command: [root.peaceExecutable, "languages", "--json"]
+    stdout: StdioCollector {
+      onStreamFinished: root.loadWBWLanguagesJson(text)
+    }
+    onExited: function(exitCode) {
+      root.wbwLanguagesLoading = false
+      if (exitCode !== 0 && root.allWBWLanguages.length === 0)
+        root.wbwLanguagesError = "Failed to load languages"
+    }
+  }
+
+  Process {
+    id: settingsLoadProcess
+
+    command: [root.peaceExecutable, "settings", "--json"]
+    stdout: StdioCollector {
+      onStreamFinished: root.applyLoadedSettingsJson(text)
+    }
+  }
+
+  Timer {
+    id: artworkRefreshTimer
+
+    interval: 500
+    onTriggered: {
+      root.artworkCaptured = false
+      root.artworkCandidate = ""
+      root.refreshArtwork()
+    }
+  }
+
   Component.onCompleted: {
     root.refreshStatus()
     root.refreshArtwork()
     root.refreshReciters()
+    root.refreshTranslations()
+    root.refreshWBWLanguages()
+    root.loadSettings()
   }
 }

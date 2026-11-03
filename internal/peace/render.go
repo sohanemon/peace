@@ -111,8 +111,8 @@ var fontFaces struct {
 	err                 error
 }
 
-func (r Runtime) renderAyah(ctx context.Context, client *quran.Client, translation string, surah, ayah int, baseImage, output string, showBasmala bool, renderOptions RenderOptions) error {
-	entry, err := client.Ayah(ctx, surah, ayah, translation)
+func (r Runtime) renderAyah(ctx context.Context, client *quran.Client, translation, wbwLanguage string, surah, ayah int, baseImage, output string, showBasmala bool, renderOptions RenderOptions) error {
+	entry, err := client.AyahWithWBW(ctx, surah, ayah, translation, wbwLanguage)
 	if err != nil {
 		return err
 	}

@@ -14,6 +14,7 @@ type Options struct {
 	Reference   string
 	Reciter     string
 	Translation string
+	WBWLanguage string
 	Follow      bool
 	Random      bool
 	Basmala     bool
@@ -37,6 +38,7 @@ type PlayState struct {
 	End           int           `json:"end"`
 	Reciter       string        `json:"reciter"`
 	Translation   string        `json:"translation"`
+	WBWLanguage   string        `json:"wbw_language,omitempty"`
 	Follow        bool          `json:"follow"`
 	Random        bool          `json:"random,omitempty"`
 	RandomSources []string      `json:"random_sources,omitempty"`

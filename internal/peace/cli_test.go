@@ -2,6 +2,7 @@ package peace
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -17,7 +18,7 @@ func TestRootHelpListsCommands(t *testing.T) {
 		if err := executeRoot(cmd); err != nil {
 			t.Fatalf("execute root help with args %v: %v", args, err)
 		}
-		for _, command := range []string{"listen", "words", "reciters", "translations", "pause", "stop", "status", "wallpaper", "random", "next", "prev"} {
+		for _, command := range []string{"listen", "words", "reciters", "translations", "languages", "settings", "pause", "stop", "status", "wallpaper", "random", "next", "prev", "current"} {
 			if !strings.Contains(stdout.String(), command) {
 				t.Errorf("root help missing %q:\n%s", command, stdout.String())
 			}
@@ -207,5 +208,65 @@ func TestUnexpectedCommandArgumentShowsUsage(t *testing.T) {
 	err := executeRoot(cmd)
 	if err == nil || !strings.Contains(err.Error(), "Usage:") || !strings.Contains(err.Error(), "peace pause") {
 		t.Fatalf("expected pause usage for unexpected argument, got %v", err)
+	}
+}
+
+func TestSettingsCommandAndPersistence(t *testing.T) {
+	stateDir := t.TempDir()
+	runtime := Runtime{Config: Config{StateDir: stateDir}}
+
+	// 1. Initial read should return defaults
+	initial := runtime.readSettings()
+	if initial.Translation != "20" || initial.WBWLanguage != "en" {
+		t.Errorf("initial settings = %+v, want translation: 20, wbw_language: en", initial)
+	}
+
+	// 2. Update translation only -> translation changes, wbw_language remains en
+	updatedTr, err := runtime.updateSettings("131", "")
+	if err != nil {
+		t.Fatalf("updateSettings translation: %v", err)
+	}
+	if updatedTr.Translation != "131" || updatedTr.WBWLanguage != "en" {
+		t.Errorf("after translation update = %+v, want translation: 131, wbw_language: en", updatedTr)
+	}
+
+	// 3. Update wbwLanguage only -> wbwLanguage changes, translation remains 131 (independent!)
+	updatedWBW, err := runtime.updateSettings("", "ur")
+	if err != nil {
+		t.Fatalf("updateSettings wbw: %v", err)
+	}
+	if updatedWBW.Translation != "131" || updatedWBW.WBWLanguage != "ur" {
+		t.Errorf("after wbwLanguage update = %+v, want translation: 131, wbw_language: ur", updatedWBW)
+	}
+
+	// 4. Read back settings from disk
+	saved := runtime.readSettings()
+	if saved.Translation != "131" || saved.WBWLanguage != "ur" {
+		t.Errorf("readSettings from disk = %+v, want translation: 131, wbw_language: ur", saved)
+	}
+
+	// 5. Run settings command via CLI with --json
+	var stdout bytes.Buffer
+	cmd := newRootCommand(runtime)
+	cmd.SetOut(&stdout)
+	cmd.SetArgs([]string{"settings", "--json"})
+	if err := executeRoot(cmd); err != nil {
+		t.Fatalf("settings --json: %v", err)
+	}
+	var fromCLI UserSettings
+	if err := json.Unmarshal(stdout.Bytes(), &fromCLI); err != nil {
+		t.Fatalf("unmarshal settings json: %v", err)
+	}
+	if fromCLI.Translation != "131" || fromCLI.WBWLanguage != "ur" {
+		t.Errorf("settings from CLI = %+v, want translation: 131, wbw_language: ur", fromCLI)
+	}
+}
+
+func TestWallpaperCurrentValidAction(t *testing.T) {
+	runtime := Runtime{Config: Config{StateDir: t.TempDir()}}
+	cmd := newRootCommand(runtime)
+	cmd.SetArgs([]string{"wallpaper", "current", "--help"})
+	if err := executeRoot(cmd); err != nil {
+		t.Fatalf("wallpaper current --help failed: %v", err)
 	}
 }

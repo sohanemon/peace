@@ -232,7 +232,7 @@ func (r Runtime) prepare(args []string) error {
 				}
 			}
 			renderErr = r.renderFollowWallpaper(ctx, wallpaperRequest{
-				Client: client, Translation: state.Translation, Surah: surah, Ayah: ayah,
+				Client: client, Translation: state.Translation, WBWLanguage: state.WBWLanguage, Surah: surah, Ayah: ayah,
 				BaseImage: renderBase, Basmala: state.Basmala, Render: state.Render,
 			})
 			if renderErr == nil {
@@ -252,6 +252,7 @@ func (r Runtime) prepare(args []string) error {
 type wallpaperRequest struct {
 	Client      *quran.Client
 	Translation string
+	WBWLanguage string
 	Surah       int
 	Ayah        int
 	BaseImage   string
@@ -271,7 +272,7 @@ func (r Runtime) renderFollowWallpaper(ctx context.Context, request wallpaperReq
 	cache := filepath.Join(r.Config.CacheDir, "follow")
 	image := followArtifact(cache, request.Surah, request.Ayah, ".png")
 	temp := image + ".tmp.png"
-	if err := r.renderAyah(ctx, request.Client, request.Translation, request.Surah, request.Ayah, request.BaseImage, temp, request.Basmala, request.Render); err != nil {
+	if err := r.renderAyah(ctx, request.Client, request.Translation, request.WBWLanguage, request.Surah, request.Ayah, request.BaseImage, temp, request.Basmala, request.Render); err != nil {
 		_ = os.Remove(temp)
 		return err
 	}

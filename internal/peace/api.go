@@ -66,7 +66,7 @@ func (r Runtime) listenOptions(o Options) error {
 			return fmt.Errorf("peace listen: snapshot current wallpaper: %w", err)
 		}
 	}
-	state := PlayState{Surah: surah, Start: start, End: end, Reciter: o.Reciter, Translation: o.Translation, Follow: o.Follow, Random: o.Random, Render: o.Render, Basmala: o.Basmala, BaseImage: baseImage, Preparing: o.Follow}
+	state := PlayState{Surah: surah, Start: start, End: end, Reciter: o.Reciter, Translation: o.Translation, WBWLanguage: o.WBWLanguage, Follow: o.Follow, Random: o.Random, Render: o.Render, Basmala: o.Basmala, BaseImage: baseImage, Preparing: o.Follow}
 	if o.Follow && o.Random {
 		state.RandomSources = r.backgroundCandidates()
 		rand.Shuffle(len(state.RandomSources), func(i, j int) {
@@ -85,7 +85,7 @@ func (r Runtime) listenOptions(o Options) error {
 			if wallpaperBase == "" {
 				wallpaperBase = baseImage
 			}
-			request := wallpaperRequest{Client: client, Translation: o.Translation, Surah: surah, Ayah: ayah, BaseImage: wallpaperBase, Basmala: o.Basmala, Render: o.Render}
+			request := wallpaperRequest{Client: client, Translation: o.Translation, WBWLanguage: o.WBWLanguage, Surah: surah, Ayah: ayah, BaseImage: wallpaperBase, Basmala: o.Basmala, Render: o.Render}
 			if err := r.prepareInitialWallpaper(ctx, request); err != nil {
 				if ayah == start {
 					return fmt.Errorf("peace listen: prepare first ayah wallpaper: %w", err)
