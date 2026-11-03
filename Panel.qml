@@ -1351,7 +1351,7 @@ Panel {
                       implicitHeight: langTagText.implicitHeight + Style.space(6)
                       anchors.verticalCenter: parent.verticalCenter
                       radius: Style.space(4)
-                      color: Qt.rgba(1, 1, 1, 0.08)
+                      color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
                       borderSpec: Border.none()
 
                       Text {
@@ -1664,7 +1664,7 @@ Panel {
                       implicitHeight: wbwIsoTagText.implicitHeight + Style.space(6)
                       anchors.verticalCenter: parent.verticalCenter
                       radius: Style.space(4)
-                      color: Qt.rgba(1, 1, 1, 0.08)
+                      color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.08)
                       borderSpec: Border.none()
 
                       Text {

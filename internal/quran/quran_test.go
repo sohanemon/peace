@@ -22,6 +22,7 @@ type fixtureServer struct {
 	perPage              string
 	wordQuery            string
 	wordFields           string
+	languageQuery        string
 }
 
 func newFixtureServer(t *testing.T) *fixtureServer {
@@ -30,6 +31,9 @@ func newFixtureServer(t *testing.T) *fixtureServer {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/resources/translations", func(w http.ResponseWriter, _ *http.Request) {
 		writeFixture(t, w, "translations.json")
+	})
+	mux.HandleFunc("/resources/languages", func(w http.ResponseWriter, _ *http.Request) {
+		writeFixture(t, w, "languages.json")
 	})
 	mux.HandleFunc("/resources/recitations", func(w http.ResponseWriter, _ *http.Request) {
 		writeFixture(t, w, "recitations.json")
@@ -43,6 +47,7 @@ func newFixtureServer(t *testing.T) *fixtureServer {
 		server.perPage = request.URL.Query().Get("per_page")
 		server.wordQuery = request.URL.Query().Get("words")
 		server.wordFields = request.URL.Query().Get("word_fields")
+		server.languageQuery = request.URL.Query().Get("language")
 		server.mu.Unlock()
 		writeFixture(t, w, "surah_1.json")
 	})
@@ -52,6 +57,7 @@ func newFixtureServer(t *testing.T) *fixtureServer {
 		server.perPage = request.URL.Query().Get("per_page")
 		server.wordQuery = request.URL.Query().Get("words")
 		server.wordFields = request.URL.Query().Get("word_fields")
+		server.languageQuery = request.URL.Query().Get("language")
 		server.mu.Unlock()
 		switch request.URL.Query().Get("page") {
 		case "1", "":
@@ -510,5 +516,189 @@ func TestDownload(t *testing.T) {
 	}
 	if string(data) != "audio" {
 		t.Errorf("downloaded %q", data)
+	}
+}
+
+func TestWBWLanguagesOnlyContainsValidWBWData(t *testing.T) {
+	server := newFixtureServer(t)
+	client := newFixtureClient(t, server)
+
+	languages, err := client.WBWLanguages(context.Background())
+	if err != nil {
+		t.Fatalf("WBWLanguages: %v", err)
+	}
+
+	// languages.json fixture has en, ur, bn, fr, es.
+	// Only en, ur, bn should be returned.
+	if len(languages) != 3 {
+		t.Fatalf("got %d languages, want 3 valid WBW languages (en, ur, bn)", len(languages))
+	}
+
+	found := make(map[string]bool)
+	for _, l := range languages {
+		found[l.ISOCode] = true
+		if l.ISOCode == "fr" || l.ISOCode == "es" {
+			t.Errorf("unexpected invalid WBW language in result: %s (%s)", l.Name, l.ISOCode)
+		}
+	}
+
+	for _, want := range []string{"en", "ur", "bn"} {
+		if !found[want] {
+			t.Errorf("expected WBW language %q missing from result", want)
+		}
+	}
+
+	// English should be first
+	if languages[0].ISOCode != "en" {
+		t.Errorf("first language = %q, want English (en)", languages[0].ISOCode)
+	}
+}
+
+func TestWBWLanguagesCachedWithTTL(t *testing.T) {
+	server := newFixtureServer(t)
+	cacheDir := t.TempDir()
+	client := newClient(server.URL, cacheDir, server.Client())
+
+	languages, err := client.WBWLanguages(context.Background())
+	if err != nil {
+		t.Fatalf("first WBWLanguages: %v", err)
+	}
+	if len(languages) == 0 {
+		t.Fatal("empty languages returned")
+	}
+
+	// Verify cached on disk
+	cachedPath := filepath.Join(cacheDir, "quran", "languages.json")
+	if _, err := os.Stat(cachedPath); err != nil {
+		t.Fatalf("expected cache file at %s: %v", cachedPath, err)
+	}
+
+	// Server shutdown: should read from cache
+	server.Close()
+	cachedClient := newClient(server.URL, cacheDir, server.Client())
+	cachedLanguages, err := cachedClient.WBWLanguages(context.Background())
+	if err != nil {
+		t.Fatalf("second WBWLanguages from cache: %v", err)
+	}
+	if len(cachedLanguages) != len(languages) {
+		t.Errorf("cached languages count = %d, want %d", len(cachedLanguages), len(languages))
+	}
+}
+
+func TestWBWLanguagesFallbackToCacheOnAPIError(t *testing.T) {
+	cacheDir := t.TempDir()
+	cachedPath := filepath.Join(cacheDir, "quran")
+	_ = os.MkdirAll(cachedPath, 0o700)
+	fixtureData, err := os.ReadFile(filepath.Join("testdata", "languages.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Pre-seed cache with an expired cache item
+	fakeLanguages := []Language{
+		{ID: 38, Name: "English", ISOCode: "en", NativeName: "English", Direction: "ltr"},
+	}
+	if err := saveCache(cacheDir, "languages", fakeLanguages); err != nil {
+		t.Fatal(err)
+	}
+
+	// Server returning 500
+	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "server error", http.StatusInternalServerError)
+	}))
+	t.Cleanup(failServer.Close)
+
+	client := newClient(failServer.URL, cacheDir, failServer.Client())
+	client.attempts = 1
+	client.delay = time.Millisecond
+
+	languages, err := client.WBWLanguages(context.Background())
+	if err != nil {
+		t.Fatalf("expected fallback to cache on API error, got err: %v", err)
+	}
+	if len(languages) != 1 || languages[0].ISOCode != "en" {
+		t.Errorf("got fallback languages %v, want 1 cached english", languages)
+	}
+	_ = fixtureData
+}
+
+func TestTranslationsFallbackToCacheOnAPIError(t *testing.T) {
+	cacheDir := t.TempDir()
+	cachedTranslations := []Translation{
+		{ID: "20", Name: "Saheeh International", Language: "english"},
+	}
+	if err := saveCache(cacheDir, "translations", cachedTranslations); err != nil {
+		t.Fatal(err)
+	}
+
+	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "server error", http.StatusInternalServerError)
+	}))
+	t.Cleanup(failServer.Close)
+
+	client := newClient(failServer.URL, cacheDir, failServer.Client())
+	client.attempts = 1
+	client.delay = time.Millisecond
+
+	translations, err := client.Translations(context.Background())
+	if err != nil {
+		t.Fatalf("expected fallback to cached translations on API error, got err: %v", err)
+	}
+	if len(translations) != 1 || translations[0].ID != "20" {
+		t.Errorf("got fallback translations %v, want 1 cached translation 20", translations)
+	}
+}
+
+func TestSurahCacheKeyIncludesTranslationAndWBWLanguage(t *testing.T) {
+	server := newFixtureServer(t)
+	cacheDir := t.TempDir()
+	client := newClient(server.URL, cacheDir, server.Client())
+
+	// Fetch with English WBW
+	_, err := client.SurahWithWBW(context.Background(), 1, "20", "en")
+	if err != nil {
+		t.Fatalf("SurahWithWBW en: %v", err)
+	}
+	keyEN := filepath.Join(cacheDir, "quran", "surah-1-20-en-words-v2.json")
+	if _, err := os.Stat(keyEN); err != nil {
+		t.Errorf("expected cache file %s to exist: %v", keyEN, err)
+	}
+
+	// Fetch with Urdu WBW
+	_, err = client.SurahWithWBW(context.Background(), 1, "20", "ur")
+	if err != nil {
+		t.Fatalf("SurahWithWBW ur: %v", err)
+	}
+	keyUR := filepath.Join(cacheDir, "quran", "surah-1-20-ur-words-v2.json")
+	if _, err := os.Stat(keyUR); err != nil {
+		t.Errorf("expected cache file %s to exist: %v", keyUR, err)
+	}
+
+	// Fetch with another translation
+	_, err = client.SurahWithWBW(context.Background(), 1, "19", "en")
+	if err != nil {
+		t.Fatalf("SurahWithWBW translation 19: %v", err)
+	}
+	key19 := filepath.Join(cacheDir, "quran", "surah-1-19-en-words-v2.json")
+	if _, err := os.Stat(key19); err != nil {
+		t.Errorf("expected cache file %s to exist: %v", key19, err)
+	}
+}
+
+func TestFetchVersesPassesWBWLanguage(t *testing.T) {
+	server := newFixtureServer(t)
+	client := newFixtureClient(t, server)
+
+	_, err := client.SurahWithWBW(context.Background(), 1, "20", "ur")
+	if err != nil {
+		t.Fatalf("SurahWithWBW: %v", err)
+	}
+
+	server.mu.Lock()
+	langQuery := server.languageQuery
+	server.mu.Unlock()
+
+	if langQuery != "ur" {
+		t.Errorf("fetchVerses language query = %q, want 'ur'", langQuery)
 	}
 }

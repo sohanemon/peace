@@ -26,6 +26,7 @@ const (
 	pathChapters     = "/chapters"
 	pathRecitations  = "/resources/recitations"
 	pathTranslations = "/resources/translations"
+	pathLanguages    = "/resources/languages"
 )
 
 func apiBaseURL() string {

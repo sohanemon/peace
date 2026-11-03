@@ -60,10 +60,35 @@ type Reciter struct {
 
 // Translation describes an available translation resource.
 type Translation struct {
-	ID       string
-	Name     string
-	Slug     string
-	Language string
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Author   string `json:"author"`
+	Slug     string `json:"slug"`
+	Language string `json:"language"`
+}
+
+// Language describes an available word-by-word language resource.
+type Language struct {
+	ID         int    `json:"id"`
+	Name       string `json:"name"`
+	ISOCode    string `json:"iso_code"`
+	NativeName string `json:"native_name"`
+	Direction  string `json:"direction"`
+}
+
+const (
+	DefaultWBWLanguage = "en"
+)
+
+var supportedWBWLanguageCodes = map[string]bool{
+	"en": true,
+	"ur": true,
+	"bn": true,
+	"tr": true,
+	"id": true,
+	"ta": true,
+	"fa": true,
+	"hi": true,
 }
 
 // Chapter describes a surah and its ayah count.
@@ -85,6 +110,7 @@ type Client struct {
 	mu           sync.Mutex
 	reciters     []Reciter
 	translations []Translation
+	languages    []Language
 	chapters     []Chapter
 	audioURLs    map[string]string
 	chapterAudio map[string]map[int]string
@@ -158,8 +184,14 @@ type audioPage struct {
 }
 
 // Surah returns every ayah of one surah, including translation and words.
-// The result is cached as one JSON file per surah and translation.
+// The result is cached as one JSON file per surah, translation, and WBW language.
 func (c *Client) Surah(ctx context.Context, surah int, translationID string) ([]Ayah, error) {
+	return c.SurahWithWBW(ctx, surah, translationID, DefaultWBWLanguage)
+}
+
+// SurahWithWBW returns every ayah of one surah, including translation and words in the specified WBW language.
+// The result is cached as one JSON file per surah, translation, and WBW language.
+func (c *Client) SurahWithWBW(ctx context.Context, surah int, translationID, wbwLanguage string) ([]Ayah, error) {
 	if err := validateSurah(surah); err != nil {
 		return nil, err
 	}
@@ -167,12 +199,16 @@ func (c *Client) Surah(ctx context.Context, surah int, translationID string) ([]
 	if err != nil {
 		return nil, err
 	}
-	key := fmt.Sprintf("surah-%d-%s-words-v2", surah, translation.ID)
+	wbwLanguage = strings.TrimSpace(strings.ToLower(wbwLanguage))
+	if wbwLanguage == "" {
+		wbwLanguage = DefaultWBWLanguage
+	}
+	key := fmt.Sprintf("surah-%d-%s-%s-words-v2", surah, translation.ID, wbwLanguage)
 	var cached []Ayah
 	if loadCache(c.cacheDir, key, surahCacheTTL, &cached) && len(cached) > 0 {
 		return cached, nil
 	}
-	verses, err := c.fetchVerses(ctx, surah, translation.ID)
+	verses, err := c.fetchVerses(ctx, surah, translation.ID, wbwLanguage)
 	if err != nil {
 		return nil, err
 	}
@@ -207,13 +243,18 @@ func (c *Client) Surah(ctx context.Context, surah int, translationID string) ([]
 
 // Ayah returns one verse. It reuses the cached surah response.
 func (c *Client) Ayah(ctx context.Context, surah, ayah int, translationID string) (Ayah, error) {
+	return c.AyahWithWBW(ctx, surah, ayah, translationID, DefaultWBWLanguage)
+}
+
+// AyahWithWBW returns one verse with the requested WBW language. It reuses the cached surah response.
+func (c *Client) AyahWithWBW(ctx context.Context, surah, ayah int, translationID, wbwLanguage string) (Ayah, error) {
 	if err := validateSurah(surah); err != nil {
 		return Ayah{}, err
 	}
 	if err := validateAyah(ayah); err != nil {
 		return Ayah{}, err
 	}
-	ayahs, err := c.Surah(ctx, surah, translationID)
+	ayahs, err := c.SurahWithWBW(ctx, surah, translationID, wbwLanguage)
 	if err != nil {
 		return Ayah{}, err
 	}
@@ -227,7 +268,12 @@ func (c *Client) Ayah(ctx context.Context, surah, ayah int, translationID string
 
 // Words returns word-by-word data for one ayah.
 func (c *Client) Words(ctx context.Context, surah, ayah int, translationID string) ([]Word, error) {
-	entry, err := c.Ayah(ctx, surah, ayah, translationID)
+	return c.WordsWithWBW(ctx, surah, ayah, translationID, DefaultWBWLanguage)
+}
+
+// WordsWithWBW returns word-by-word data for one ayah in the specified WBW language.
+func (c *Client) WordsWithWBW(ctx context.Context, surah, ayah int, translationID, wbwLanguage string) ([]Word, error) {
+	entry, err := c.AyahWithWBW(ctx, surah, ayah, translationID, wbwLanguage)
 	if err != nil {
 		return nil, err
 	}
@@ -237,12 +283,16 @@ func (c *Client) Words(ctx context.Context, surah, ayah int, translationID strin
 	return entry.Words, nil
 }
 
-func (c *Client) fetchVerses(ctx context.Context, surah int, translationID string) ([]verse, error) {
+func (c *Client) fetchVerses(ctx context.Context, surah int, translationID, wbwLanguage string) ([]verse, error) {
+	if wbwLanguage == "" {
+		wbwLanguage = DefaultWBWLanguage
+	}
 	query := queryValues(
 		"fields", "text_uthmani",
 		"translations", translationID,
 		"words", "true",
 		"word_fields", "text_uthmani,transliteration,translation",
+		"language", wbwLanguage,
 		"per_page", strconv.Itoa(perPage),
 	)
 	return paginate(ctx, func(ctx context.Context, page int) ([]verse, *int, error) {
@@ -486,12 +536,17 @@ func (c *Client) Translations(ctx context.Context) ([]Translation, error) {
 		Translations []struct {
 			ID           int    `json:"id"`
 			Name         string `json:"name"`
+			AuthorName   string `json:"author_name"`
 			Slug         string `json:"slug"`
 			LanguageName string `json:"language_name"`
 			LanguageCode string `json:"language_code"`
 		} `json:"translations"`
 	}
 	if err := c.getJSON(ctx, pathTranslations, nil, &response); err != nil {
+		if loadCache(c.cacheDir, "translations", 0, &cached) && len(cached) > 0 {
+			c.storeTranslations(cached)
+			return cached, nil
+		}
 		return nil, err
 	}
 	translations := make([]Translation, 0, len(response.Translations))
@@ -503,6 +558,7 @@ func (c *Client) Translations(ctx context.Context) ([]Translation, error) {
 		translations = append(translations, Translation{
 			ID:       strconv.Itoa(entry.ID),
 			Name:     entry.Name,
+			Author:   entry.AuthorName,
 			Slug:     entry.Slug,
 			Language: language,
 		})
@@ -520,6 +576,82 @@ func (c *Client) Translations(ctx context.Context) ([]Translation, error) {
 	}
 	c.storeTranslations(translations)
 	return append([]Translation(nil), translations...), nil
+}
+
+// WBWLanguages returns every available word-by-word language resource.
+func (c *Client) WBWLanguages(ctx context.Context) ([]Language, error) {
+	c.mu.Lock()
+	if len(c.languages) > 0 {
+		languages := append([]Language(nil), c.languages...)
+		c.mu.Unlock()
+		return languages, nil
+	}
+	c.mu.Unlock()
+
+	var cached []Language
+	if loadCache(c.cacheDir, "languages", resourceCacheTTL, &cached) && len(cached) > 0 {
+		c.storeLanguages(cached)
+		return cached, nil
+	}
+
+	var response struct {
+		Languages []struct {
+			ID         int    `json:"id"`
+			Name       string `json:"name"`
+			ISOCode    string `json:"iso_code"`
+			NativeName string `json:"native_name"`
+			Direction  string `json:"direction"`
+		} `json:"languages"`
+	}
+	if err := c.getJSON(ctx, pathLanguages, nil, &response); err != nil {
+		if loadCache(c.cacheDir, "languages", 0, &cached) && len(cached) > 0 {
+			c.storeLanguages(cached)
+			return cached, nil
+		}
+		return nil, err
+	}
+
+	languages := make([]Language, 0, len(supportedWBWLanguageCodes))
+	for _, entry := range response.Languages {
+		code := strings.ToLower(strings.TrimSpace(entry.ISOCode))
+		if !supportedWBWLanguageCodes[code] {
+			continue
+		}
+		native := strings.TrimSpace(entry.NativeName)
+		if native == "" {
+			native = strings.TrimSpace(entry.Name)
+		}
+		languages = append(languages, Language{
+			ID:         entry.ID,
+			Name:       strings.TrimSpace(entry.Name),
+			ISOCode:    code,
+			NativeName: native,
+			Direction:  strings.TrimSpace(entry.Direction),
+		})
+	}
+	if len(languages) == 0 {
+		return nil, errors.New("quran.com API: empty language list")
+	}
+	sort.SliceStable(languages, func(first, second int) bool {
+		if languages[first].ISOCode == DefaultWBWLanguage {
+			return true
+		}
+		if languages[second].ISOCode == DefaultWBWLanguage {
+			return false
+		}
+		return languages[first].Name < languages[second].Name
+	})
+	if err := saveCache(c.cacheDir, "languages", languages); err != nil {
+		return nil, err
+	}
+	c.storeLanguages(languages)
+	return append([]Language(nil), languages...), nil
+}
+
+func (c *Client) storeLanguages(languages []Language) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.languages = append([]Language(nil), languages...)
 }
 
 // Reciter resolves a numeric ID or migrates a legacy identifier.
