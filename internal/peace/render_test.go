@@ -1,12 +1,20 @@
 package peace
 
 import (
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
+	"os"
+	"path/filepath"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/go-text/typesetting/di"
 	"github.com/go-text/typesetting/language"
 	"github.com/go-text/typesetting/shaping"
 	"golang.org/x/image/math/fixed"
+	"io.github.sohanemon/peace/internal/quran"
 )
 
 func TestLayoutWBWRowsWrapsAndPreservesReadingOrder(t *testing.T) {
@@ -123,7 +131,7 @@ func TestFooterTranslationWrapsWithinConfiguredWidth(t *testing.T) {
 	}
 	block, err := renderBalancedTextBlock(textStyle{
 		Text: "O you who have believed, when you contract a debt for a specified term, write it down. And let a scribe write it between you in justice.",
-		Size: 18, Face: fontFaces.Serif, Direction: di.DirectionLTR, Script: language.Latin,
+		Size: 18, Face: fontFaces.Translation, Direction: di.DirectionLTR, Script: language.Latin,
 	}, 320)
 	if err != nil {
 		t.Fatal(err)
@@ -133,6 +141,98 @@ func TestFooterTranslationWrapsWithinConfiguredWidth(t *testing.T) {
 	}
 	if block.AdvanceWidth > 320 {
 		t.Errorf("translation advance width=%d, exceeds footer max width 320", block.AdvanceWidth)
+	}
+}
+
+func TestWallpaperPipelineRendersMultilingualText(t *testing.T) {
+	if err := loadRenderFonts(); err != nil {
+		t.Fatal(err)
+	}
+	bengali := "পরম করুণাময়"
+	if !utf8.ValidString(bengali) {
+		t.Fatal("Bengali fixture is not valid UTF-8")
+	}
+	face := selectFontFace(bengali, fontFaces.Translation)
+	if face == fontFaces.Translation || !faceCoversText(face, bengali) {
+		t.Fatal("system font fallback did not select a face covering the Bengali text")
+	}
+	if got := textScript(bengali, language.Latin); got != language.LookupScript('প') {
+		t.Fatalf("Bengali script = %s, want %s", got, language.LookupScript('প'))
+	}
+	directory := t.TempDir()
+	basePath := filepath.Join(directory, "base.png")
+	base := image.NewRGBA(image.Rect(0, 0, 1920, 1080))
+	draw.Draw(base, base.Bounds(), image.NewUniform(color.RGBA{R: 20, G: 30, B: 28, A: 255}), image.Point{}, draw.Src)
+	baseFile, err := os.Create(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(baseFile, base); err != nil {
+		t.Fatal(err)
+	}
+	if err := baseFile.Close(); err != nil {
+		t.Fatal(err)
+	}
+	runtime := Runtime{Config: Config{Home: directory}}
+	cases := []struct {
+		translation string
+		words       []quran.Word
+		wordByWord  bool
+	}{
+		{translation: bengali},
+		{translation: "The Most Merciful"},
+		{translation: "نہایت مہربان"},
+		{translation: "بخشندهٔ مهربان"},
+		{words: []quran.Word{
+			{Arabic: "الرَّحْمَٰن", Translation: bengali},
+			{Arabic: "الرَّحِيم", Translation: "The Most Merciful"},
+		}, wordByWord: true},
+	}
+	for index, testCase := range cases {
+		outputPath := filepath.Join(directory, string(rune('a'+index))+".png")
+		ayah := quran.Ayah{Surah: 1, Number: 1, SurahName: "Al-Fatihah", Arabic: "الرَّحْمَٰن", Translation: testCase.translation, Words: testCase.words}
+		options := RenderOptions{ShowTranslation: !testCase.wordByWord, ShowWordTranslation: testCase.wordByWord}
+		if err := runtime.renderAyahText(ayah, basePath, outputPath, options); err != nil {
+			t.Fatalf("render wallpaper case %d: %v", index, err)
+		}
+		file, err := os.Open(outputPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := png.Decode(file)
+		_ = file.Close()
+		if err != nil {
+			t.Fatalf("decode generated wallpaper: %v", err)
+		}
+		if decoded.Bounds().Dx() != 1920 || decoded.Bounds().Dy() != 1080 {
+			t.Fatalf("generated wallpaper size = %v", decoded.Bounds())
+		}
+		changedPixels := 0
+		for y := 0; y < decoded.Bounds().Dy() && changedPixels == 0; y++ {
+			for x := 0; x < decoded.Bounds().Dx(); x++ {
+				if decoded.At(x, y) != base.At(x, y) {
+					changedPixels++
+					break
+				}
+			}
+		}
+		if changedPixels == 0 {
+			t.Fatalf("generated wallpaper case %d contains no rendered text", index)
+		}
+	}
+	wordStyle := textStyleForText(textStyle{Face: fontFaces.Translation, Script: language.Latin}, bengali)
+	fullTranslationStyle := textStyleForText(textStyle{Face: fontFaces.Translation, Script: language.Latin}, bengali+" এবং")
+	if wordStyle.Face == fontFaces.Translation || !faceCoversText(wordStyle.Face, bengali) || wordStyle.Script != language.LookupScript('প') {
+		t.Fatal("word-by-word Bengali meaning did not select a covering font and script")
+	}
+	if wordStyle.Face != fullTranslationStyle.Face {
+		t.Fatal("Bengali word meanings and full translation selected different font faces")
+	}
+	for _, text := range []string{"نہایت مہربان", "بخشندهٔ مهربان"} {
+		style := textStyleForText(textStyle{Face: fontFaces.Translation, Script: language.Latin}, text)
+		if !faceCoversText(style.Face, text) || style.Script != language.Arabic || style.Direction != di.DirectionRTL {
+			t.Fatalf("font selection failed for Arabic-script translation %q", text)
+		}
 	}
 }
 

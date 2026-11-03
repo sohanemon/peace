@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/go-text/typesetting/di"
 	"github.com/go-text/typesetting/font"
@@ -107,8 +108,12 @@ var linearLuminance = func() [256]float64 {
 }()
 var fontFaces struct {
 	sync.Once
-	Arabic, Serif, Sans *font.Face
-	err                 error
+	Arabic, Translation, Interface *font.Face
+	err                            error
+}
+var systemFontFaces struct {
+	mu       sync.Mutex
+	byScript map[language.Script]*font.Face
 }
 
 func (r Runtime) renderAyah(ctx context.Context, client *quran.Client, translation, wbwLanguage string, surah, ayah int, baseImage, output string, showBasmala bool, renderOptions RenderOptions) error {
@@ -165,6 +170,9 @@ func normalizeArabicLetter(letter rune) rune {
 func (r Runtime) renderAyahText(ayah quran.Ayah, baseImage, output string, renderOptions RenderOptions) error {
 	if err := loadRenderFonts(); err != nil {
 		return err
+	}
+	if !utf8.ValidString(ayah.Translation) || !utf8.ValidString(ayah.Arabic) {
+		return fmt.Errorf("ayah %d:%d contains invalid UTF-8 text", ayah.Surah, ayah.Number)
 	}
 	colors := r.currentColors()
 	width, height := r.screenSize()
@@ -263,7 +271,7 @@ func renderWordByWordBlock(ayah quran.Ayah, palette textPalette, width, maxHeigh
 	var rows []wbwRow
 	for attempt := 0; attempt < 20; attempt++ {
 		arabicStyle := textStyle{Size: 48 * fontScale / 100, Minimum: 14, Face: fontFaces.Arabic, Color: palette.Arabic, Direction: di.DirectionRTL, Script: language.Arabic}
-		meaningStyle := textStyle{Size: 22 * fontScale / 100, Minimum: 9, Face: fontFaces.Sans, Color: palette.Translation, Direction: di.DirectionLTR, Script: language.Latin}
+		meaningStyle := textStyle{Size: 22 * fontScale / 100, Minimum: 9, Face: fontFaces.Translation, Color: palette.Translation, Direction: di.DirectionLTR, Script: language.Latin}
 		var err error
 		columnGap := max(12, arabicStyle.Size/3)
 		rows, err = renderWBWRows(ayah.Words, textWidth, columnMaxWidth, max(10, arabicStyle.Size/3), columnGap, max(10, arabicStyle.Size/3), arabicStyle, meaningStyle)
@@ -293,10 +301,10 @@ func renderWallpaperFooter(ayah quran.Ayah, options RenderOptions, palette textP
 	for attempt := 0; attempt < 24; attempt++ {
 		footer := wallpaperFooter{Width: footerWidth}
 		if options.ShowTranslation && strings.TrimSpace(ayah.Translation) != "" {
-			style := textStyle{
-				Text: trimEdgeQuote(ayah.Translation), Size: max(wallpaperTranslationMinimumFontSize, wallpaperTranslationFontSize*fontScale/100), Minimum: wallpaperTranslationMinimumFontSize, Face: fontFaces.Serif,
-				Color: palette.Translation, TargetContrast: 4.5, Direction: di.DirectionLTR, Script: language.Latin,
-			}
+			style := textStyleForText(textStyle{
+				Size: max(wallpaperTranslationMinimumFontSize, wallpaperTranslationFontSize*fontScale/100), Minimum: wallpaperTranslationMinimumFontSize,
+				Face: fontFaces.Translation, Color: palette.Translation, TargetContrast: 4.5, Direction: di.DirectionLTR, Script: language.Latin,
+			}, trimEdgeQuote(ayah.Translation))
 			block, err := renderBalancedTextBlock(style, footerWidth)
 			if err != nil {
 				if attempt == 23 {
@@ -309,7 +317,7 @@ func renderWallpaperFooter(ayah quran.Ayah, options RenderOptions, palette textP
 		}
 		if options.ShowReference {
 			style := textStyle{
-				Text: ayahReference(ayah), Size: max(wallpaperReferenceMinimumFontSize, wallpaperReferenceFontSize*fontScale/100), Minimum: wallpaperReferenceMinimumFontSize, Face: fontFaces.Sans,
+				Text: ayahReference(ayah), Size: max(wallpaperReferenceMinimumFontSize, wallpaperReferenceFontSize*fontScale/100), Minimum: wallpaperReferenceMinimumFontSize, Face: fontFaces.Interface,
 				Color: palette.Reference, TargetContrast: 3, Direction: di.DirectionLTR, Script: language.Latin,
 			}
 			block, err := renderTextBlock(style, footerWidth)
@@ -484,8 +492,8 @@ func renderWBWRows(words []quran.Word, maxWidth, maxColumnWidth, columnPadding, 
 		arabic = cropRenderedText(arabic)
 		meaning := renderedText{Image: image.NewRGBA(image.Rect(0, 0, 1, 1)), Width: 1, Height: 1, AdvanceCenterX: 1, LineCount: 1}
 		if strings.TrimSpace(word.Translation) != "" {
-			meaningStyle.Text = strings.TrimSpace(word.Translation)
-			meaning, err = renderTextBlockWithMetrics(meaningStyle, maxColumnWidth, &meaningMetrics)
+			wordMeaningStyle := textStyleForText(meaningStyle, strings.TrimSpace(word.Translation))
+			meaning, err = renderTextBlockWithMetrics(wordMeaningStyle, maxColumnWidth, &meaningMetrics)
 			if err != nil {
 				return nil, err
 			}
@@ -553,6 +561,10 @@ func measureWBWLineMetrics(words []quran.Word, style textStyle, maxWidth int, me
 		if text == "" {
 			continue
 		}
+		wordStyle := textStyleForText(style, text)
+		input.Face = wordStyle.Face
+		input.Script = wordStyle.Script
+		input.Direction = wordStyle.Direction
 		for _, line := range wrapShapedText(text, maxWidth, shape) {
 			out := shape(line)
 			lineAscent, lineDescent := out.LineBounds.Ascent.Round(), out.LineBounds.Descent.Round()
@@ -697,13 +709,102 @@ func loadRenderFonts() error {
 	fontFaces.Do(func() {
 		fontFaces.Arabic, fontFaces.err = parseEmbeddedFont("fonts/Amiri-Regular.ttf")
 		if fontFaces.err == nil {
-			fontFaces.Serif, fontFaces.err = parseEmbeddedFont("fonts/DejaVuSerif.ttf")
+			fontFaces.Translation, fontFaces.err = parseEmbeddedFont("fonts/DejaVuSerif.ttf")
 		}
 		if fontFaces.err == nil {
-			fontFaces.Sans, fontFaces.err = parseEmbeddedFont("fonts/DejaVuSans.ttf")
+			fontFaces.Interface, fontFaces.err = parseEmbeddedFont("fonts/DejaVuSans.ttf")
 		}
 	})
 	return fontFaces.err
+}
+
+func selectFontFace(text string, preferred *font.Face) *font.Face {
+	if faceCoversText(preferred, text) {
+		return preferred
+	}
+	script := textScript(text, language.Latin)
+	return systemFontForScript(script, text)
+}
+
+func textStyleForText(style textStyle, text string) textStyle {
+	style.Text = text
+	style.Face = selectFontFace(text, style.Face)
+	style.Script = textScript(text, style.Script)
+	style.Direction = textDirection(style.Script, style.Direction)
+	return style
+}
+
+func textDirection(script language.Script, fallback di.Direction) di.Direction {
+	switch script.String() {
+	case "Arab", "Hebr", "Syrc", "Thaa", "Nkoo", "Adlm", "Rohg", "Sogd", "Sogo", "Mand", "Mend", "Phnx":
+		return di.DirectionRTL
+	default:
+		return fallback
+	}
+}
+
+func faceCoversText(face *font.Face, text string) bool {
+	if face == nil {
+		return false
+	}
+	for _, current := range text {
+		if unicode.IsSpace(current) || unicode.Is(unicode.Mn, current) || unicode.Is(unicode.Cf, current) || current == '\ufe0f' {
+			continue
+		}
+		if _, ok := face.NominalGlyph(current); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func textScript(text string, fallback language.Script) language.Script {
+	for _, current := range text {
+		if script := language.LookupScript(current); script.Strong() {
+			return script
+		}
+	}
+	return fallback
+}
+
+func systemFontForScript(script language.Script, text string) *font.Face {
+	systemFontFaces.mu.Lock()
+	defer systemFontFaces.mu.Unlock()
+	if systemFontFaces.byScript == nil {
+		systemFontFaces.byScript = make(map[language.Script]*font.Face)
+	}
+	if face := systemFontFaces.byScript[script]; face != nil && faceCoversText(face, text) {
+		return face
+	}
+	representative := scriptRepresentative(script)
+	if representative == 0 {
+		return fontFaces.Translation
+	}
+	pattern := fmt.Sprintf("serif:charset=%04x:weight=80", representative)
+	output, err := exec.Command("fc-match", "--format", "%{file}", pattern).Output()
+	if err != nil {
+		return fontFaces.Translation
+	}
+	path := strings.TrimSpace(string(output))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fontFaces.Translation
+	}
+	face, err := font.ParseTTF(bytes.NewReader(data))
+	if err != nil || !faceCoversText(face, text) {
+		return fontFaces.Translation
+	}
+	systemFontFaces.byScript[script] = face
+	return face
+}
+
+func scriptRepresentative(script language.Script) rune {
+	for current := rune(0x20); current <= unicode.MaxRune; current++ {
+		if unicode.IsLetter(current) && language.LookupScript(current) == script {
+			return current
+		}
+	}
+	return 0
 }
 
 func parseEmbeddedFont(path string) (*font.Face, error) {
