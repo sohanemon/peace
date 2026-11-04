@@ -21,6 +21,17 @@ import (
 // CurrentVersion is the supported configuration schema version.
 const CurrentVersion = 1
 
+// Configuration keys accepted by Value and Assign.
+const (
+	KeyVersion            = "version"
+	KeyReciter            = "reciter"
+	KeyTranslation        = "translation"
+	KeyTranslationEnabled = "translation_enabled"
+	KeyWBWEnabled         = "wbw_enabled"
+	KeyWBWLanguage        = "wbw_language"
+	KeyWBWTransliteration = "wbw_transliteration"
+)
+
 // Config is the complete persistent peace user configuration.
 type Config struct {
 	Version            int    `toml:"version"`
@@ -115,9 +126,9 @@ func Save(cfg Config) error {
 
 	data := render(cfg)
 	if existing, readErr := os.ReadFile(path); readErr == nil {
-		current := DefaultConfig()
-		if unmarshalErr := toml.Unmarshal(existing, &current); unmarshalErr != nil {
-			return parseError(path, unmarshalErr)
+		current, decodeErr := decode(path, existing)
+		if decodeErr != nil {
+			return decodeErr
 		}
 		if current == cfg {
 			return nil
@@ -183,127 +194,171 @@ func writeAtomic(path string, data []byte) error {
 	return nil
 }
 
+type keySpec struct {
+	name    string
+	comment string
+	value   func(Config) string
+	literal func(Config) string
+	assign  func(*Config, string) error
+}
+
+func intKey(name, comment string, get func(Config) int) keySpec {
+	format := func(cfg Config) string { return strconv.Itoa(get(cfg)) }
+	return keySpec{
+		name:    name,
+		comment: comment,
+		value:   format,
+		literal: format,
+	}
+}
+
+func stringKey(name, comment string, get func(Config) string, set func(*Config, string)) keySpec {
+	return keySpec{
+		name:    name,
+		comment: comment,
+		value:   get,
+		literal: func(cfg Config) string { return strconv.Quote(get(cfg)) },
+		assign: func(cfg *Config, value string) error {
+			set(cfg, value)
+			return nil
+		},
+	}
+}
+
+func boolKey(name, comment string, get func(Config) bool, set func(*Config, bool)) keySpec {
+	format := func(cfg Config) string { return strconv.FormatBool(get(cfg)) }
+	return keySpec{
+		name:    name,
+		comment: comment,
+		value:   format,
+		literal: format,
+		assign: func(cfg *Config, value string) error {
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				return fmt.Errorf("%s must be true or false, got %q", name, value)
+			}
+			set(cfg, parsed)
+			return nil
+		},
+	}
+}
+
+var keySpecs = []keySpec{
+	intKey(
+		KeyVersion,
+		"Configuration schema version. Do not edit.",
+		func(cfg Config) int { return cfg.Version },
+	),
+	stringKey(
+		KeyReciter,
+		"Quran.com numeric reciter ID. List them with `peace reciters`.",
+		func(cfg Config) string { return cfg.Reciter },
+		func(cfg *Config, value string) { cfg.Reciter = value },
+	),
+	stringKey(
+		KeyTranslation,
+		"Quran.com numeric translation ID. List them with `peace translations`.",
+		func(cfg Config) string { return cfg.Translation },
+		func(cfg *Config, value string) { cfg.Translation = value },
+	),
+	boolKey(
+		KeyTranslationEnabled,
+		"Show the ayah translation on wallpapers by default.",
+		func(cfg Config) bool { return cfg.TranslationEnabled },
+		func(cfg *Config, value bool) { cfg.TranslationEnabled = value },
+	),
+	boolKey(
+		KeyWBWEnabled,
+		"Show word-by-word meanings on wallpapers by default.",
+		func(cfg Config) bool { return cfg.WBWEnabled },
+		func(cfg *Config, value bool) { cfg.WBWEnabled = value },
+	),
+	stringKey(
+		KeyWBWLanguage,
+		"Word-by-word meaning language (for example en, ur, bn). List them with `peace languages`.",
+		func(cfg Config) string { return cfg.WBWLanguage },
+		func(cfg *Config, value string) { cfg.WBWLanguage = value },
+	),
+	boolKey(
+		KeyWBWTransliteration,
+		"Show word-by-word transliteration on wallpapers by default.",
+		func(cfg Config) bool { return cfg.WBWTransliteration },
+		func(cfg *Config, value bool) { cfg.WBWTransliteration = value },
+	),
+}
+
+func keyFor(name string) (keySpec, bool) {
+	for _, spec := range keySpecs {
+		if spec.name == name {
+			return spec, true
+		}
+	}
+	return keySpec{}, false
+}
+
+func unknownKey(name string) error {
+	return fmt.Errorf("unknown config key %q (valid keys: %s)", name, strings.Join(KeyNames(), ", "))
+}
+
 func render(cfg Config) []byte {
 	var builder strings.Builder
 	builder.WriteString("# Peace user settings.\n")
 	builder.WriteString("# Precedence: CLI flags > PEACE_* environment variables > this file > built-in defaults.\n")
 	builder.WriteString("# Edit with `peace config edit` or `peace config set <key> <value>`.\n\n")
-
-	builder.WriteString("# Configuration schema version. Do not edit.\n")
-	fmt.Fprintf(&builder, "version = %d\n\n", cfg.Version)
-
-	builder.WriteString("# Quran.com numeric reciter ID. List them with `peace reciters`.\n")
-	fmt.Fprintf(&builder, "reciter = %s\n\n", strconv.Quote(cfg.Reciter))
-
-	builder.WriteString("# Quran.com numeric translation ID. List them with `peace translations`.\n")
-	fmt.Fprintf(&builder, "translation = %s\n\n", strconv.Quote(cfg.Translation))
-
-	builder.WriteString("# Show the ayah translation on wallpapers by default.\n")
-	fmt.Fprintf(&builder, "translation_enabled = %t\n\n", cfg.TranslationEnabled)
-
-	builder.WriteString("# Show word-by-word meanings on wallpapers by default.\n")
-	fmt.Fprintf(&builder, "wbw_enabled = %t\n\n", cfg.WBWEnabled)
-
-	builder.WriteString("# Word-by-word meaning language (for example en, ur, bn). List them with `peace languages`.\n")
-	fmt.Fprintf(&builder, "wbw_language = %s\n\n", strconv.Quote(cfg.WBWLanguage))
-
-	builder.WriteString("# Show word-by-word transliteration on wallpapers by default.\n")
-	fmt.Fprintf(&builder, "wbw_transliteration = %t\n", cfg.WBWTransliteration)
+	for index, spec := range keySpecs {
+		if index > 0 {
+			builder.WriteByte('\n')
+		}
+		fmt.Fprintf(&builder, "# %s\n%s = %s\n", spec.comment, spec.name, spec.literal(cfg))
+	}
 	return []byte(builder.String())
 }
 
 // KeyNames lists the keys accepted by Value and Assign.
 func KeyNames() []string {
-	return []string{"version", "reciter", "translation", "translation_enabled", "wbw_enabled", "wbw_language", "wbw_transliteration"}
+	names := make([]string, len(keySpecs))
+	for index, spec := range keySpecs {
+		names[index] = spec.name
+	}
+	return names
 }
 
 // Value returns the printable value of one configuration key.
 func Value(cfg Config, key string) (string, error) {
-	switch key {
-	case "version":
-		return strconv.Itoa(cfg.Version), nil
-	case "reciter":
-		return cfg.Reciter, nil
-	case "translation":
-		return cfg.Translation, nil
-	case "translation_enabled":
-		return strconv.FormatBool(cfg.TranslationEnabled), nil
-	case "wbw_enabled":
-		return strconv.FormatBool(cfg.WBWEnabled), nil
-	case "wbw_language":
-		return cfg.WBWLanguage, nil
-	case "wbw_transliteration":
-		return strconv.FormatBool(cfg.WBWTransliteration), nil
-	default:
-		return "", fmt.Errorf("unknown config key %q (valid keys: %s)", key, strings.Join(KeyNames(), ", "))
+	spec, ok := keyFor(key)
+	if !ok {
+		return "", unknownKey(key)
 	}
+	return spec.value(cfg), nil
 }
 
 // Assign sets one configuration key from its string representation.
 func Assign(cfg *Config, key, value string) error {
-	value = strings.TrimSpace(value)
-	switch key {
-	case "version":
-		return errors.New("version is managed automatically and cannot be set")
-	case "reciter":
-		cfg.Reciter = value
-	case "translation":
-		cfg.Translation = value
-	case "translation_enabled":
-		parsed, err := strconv.ParseBool(value)
-		if err != nil {
-			return fmt.Errorf("translation_enabled must be true or false, got %q", value)
-		}
-		cfg.TranslationEnabled = parsed
-	case "wbw_enabled":
-		parsed, err := strconv.ParseBool(value)
-		if err != nil {
-			return fmt.Errorf("wbw_enabled must be true or false, got %q", value)
-		}
-		cfg.WBWEnabled = parsed
-	case "wbw_language":
-		cfg.WBWLanguage = value
-	case "wbw_transliteration":
-		parsed, err := strconv.ParseBool(value)
-		if err != nil {
-			return fmt.Errorf("wbw_transliteration must be true or false, got %q", value)
-		}
-		cfg.WBWTransliteration = parsed
-	default:
-		return fmt.Errorf("unknown config key %q (valid keys: %s)", key, strings.Join(KeyNames(), ", "))
+	spec, ok := keyFor(key)
+	if !ok {
+		return unknownKey(key)
 	}
-	return nil
+	if spec.assign == nil {
+		return fmt.Errorf("%s is managed automatically and cannot be set", key)
+	}
+	return spec.assign(cfg, strings.TrimSpace(value))
 }
 
 // EnvOverrides layers PEACE_* environment variables over cfg. CLI flags are
 // applied by the command layer and take precedence over the result.
 func EnvOverrides(cfg Config) (Config, error) {
-	if value := strings.TrimSpace(os.Getenv("PEACE_RECITER")); value != "" {
-		cfg.Reciter = value
-	}
-	if value := strings.TrimSpace(os.Getenv("PEACE_TRANSLATION")); value != "" {
-		cfg.Translation = value
-	}
-	if value := strings.TrimSpace(os.Getenv("PEACE_WBW_LANGUAGE")); value != "" {
-		cfg.WBWLanguage = value
-	}
-	for _, item := range []struct {
-		name  string
-		value *bool
-	}{
-		{"PEACE_TRANSLATION_ENABLED", &cfg.TranslationEnabled},
-		{"PEACE_WBW_ENABLED", &cfg.WBWEnabled},
-		{"PEACE_WBW_TRANSLITERATION", &cfg.WBWTransliteration},
-	} {
-		value := strings.TrimSpace(os.Getenv(item.name))
+	for _, spec := range keySpecs {
+		if spec.assign == nil {
+			continue
+		}
+		env := "PEACE_" + strings.ToUpper(spec.name)
+		value := strings.TrimSpace(os.Getenv(env))
 		if value == "" {
 			continue
 		}
-		parsed, err := strconv.ParseBool(value)
-		if err != nil {
-			return Config{}, fmt.Errorf("%s must be true or false, got %q", item.name, value)
+		if err := Assign(&cfg, spec.name, value); err != nil {
+			return Config{}, fmt.Errorf("%s: %w", env, err)
 		}
-		*item.value = parsed
 	}
 	if err := Validate(cfg); err != nil {
 		return Config{}, fmt.Errorf("environment overrides: %w", err)

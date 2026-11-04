@@ -23,9 +23,9 @@ func newConfigCommand(_ Runtime) *cobra.Command {
 		Short: "Print the configuration file path",
 		Args:  noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			path, err := config.Path()
+			path, err := userConfigPath(cmd)
 			if err != nil {
-				return fmt.Errorf("peace config path: %w", err)
+				return err
 			}
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), path)
 			return nil
@@ -34,20 +34,15 @@ func newConfigCommand(_ Runtime) *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "get KEY",
 		Short: "Print one configuration value",
-		Args: func(_ *cobra.Command, args []string) error {
-			if len(args) != 1 {
-				return &cliUsageError{err: errors.New("peace config get: key is required")}
-			}
-			return nil
-		},
+		Args:  exactUsageArgs(1, "key is required"),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
+			cfg, err := loadUserSettings(cmd)
 			if err != nil {
-				return fmt.Errorf("peace config get: %w", err)
+				return err
 			}
 			value, err := config.Value(cfg, args[0])
 			if err != nil {
-				return fmt.Errorf("peace config get: %w", err)
+				return fmt.Errorf("%s: %w", cmd.CommandPath(), err)
 			}
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), value)
 			return nil
@@ -57,44 +52,33 @@ func newConfigCommand(_ Runtime) *cobra.Command {
 		Use:   "set KEY VALUE",
 		Short: "Change one configuration value",
 		Long:  "Change one configuration value. Values are validated before the file is replaced atomically.",
-		Args: func(_ *cobra.Command, args []string) error {
-			if len(args) != 2 {
-				return &cliUsageError{err: errors.New("peace config set: key and value are required")}
-			}
-			return nil
-		},
-		RunE: func(_ *cobra.Command, args []string) error {
-			cfg, err := config.Load()
+		Args:  exactUsageArgs(2, "key and value are required"),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadUserSettings(cmd)
 			if err != nil {
-				return fmt.Errorf("peace config set: %w", err)
+				return err
 			}
 			if err := config.Assign(&cfg, args[0], args[1]); err != nil {
-				return fmt.Errorf("peace config set: %w", err)
+				return fmt.Errorf("%s: %w", cmd.CommandPath(), err)
 			}
-			if err := config.Validate(cfg); err != nil {
-				return fmt.Errorf("peace config set: %w", err)
-			}
-			if err := config.Save(cfg); err != nil {
-				return fmt.Errorf("peace config set: %w", err)
-			}
-			return nil
+			return saveUserSettings(cmd, cfg)
 		},
 	})
 	cmd.AddCommand(&cobra.Command{
 		Use:   "edit",
 		Short: "Open the configuration file in $VISUAL or $EDITOR",
 		Args:  noArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			path, err := config.Path()
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			path, err := userConfigPath(cmd)
 			if err != nil {
-				return fmt.Errorf("peace config edit: %w", err)
+				return err
 			}
 			if _, statErr := os.Stat(path); errors.Is(statErr, os.ErrNotExist) {
-				if err := config.Save(config.DefaultConfig()); err != nil {
-					return fmt.Errorf("peace config edit: %w", err)
+				if err := saveUserSettings(cmd, config.DefaultConfig()); err != nil {
+					return err
 				}
 			} else if statErr != nil {
-				return fmt.Errorf("peace config edit: %w", statErr)
+				return fmt.Errorf("%s: %w", cmd.CommandPath(), statErr)
 			}
 			editor := strings.TrimSpace(os.Getenv("VISUAL"))
 			if editor == "" {
@@ -107,13 +91,43 @@ func newConfigCommand(_ Runtime) *cobra.Command {
 			command := exec.Command(fields[0], append(fields[1:], path)...)
 			command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr
 			if err := command.Run(); err != nil {
-				return fmt.Errorf("peace config edit: %w", err)
+				return fmt.Errorf("%s: %w", cmd.CommandPath(), err)
 			}
-			if _, err := config.Load(); err != nil {
-				return fmt.Errorf("peace config edit: %w", err)
-			}
-			return nil
+			_, err = loadUserSettings(cmd)
+			return err
 		},
 	})
 	return cmd
+}
+
+func exactUsageArgs(count int, message string) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		if len(args) != count {
+			return &cliUsageError{err: fmt.Errorf("%s: %s", cmd.CommandPath(), message)}
+		}
+		return nil
+	}
+}
+
+func userConfigPath(cmd *cobra.Command) (string, error) {
+	path, err := config.Path()
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", cmd.CommandPath(), err)
+	}
+	return path, nil
+}
+
+func loadUserSettings(cmd *cobra.Command) (config.Config, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		return config.Config{}, fmt.Errorf("%s: %w", cmd.CommandPath(), err)
+	}
+	return cfg, nil
+}
+
+func saveUserSettings(cmd *cobra.Command, cfg config.Config) error {
+	if err := config.Save(cfg); err != nil {
+		return fmt.Errorf("%s: %w", cmd.CommandPath(), err)
+	}
+	return nil
 }
