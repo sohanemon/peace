@@ -30,6 +30,11 @@ const (
 	KeyWBWEnabled         = "wbw_enabled"
 	KeyWBWLanguage        = "wbw_language"
 	KeyWBWTransliteration = "wbw_transliteration"
+	KeyFollowEnabled      = "follow_enabled"
+	KeyBasmalaEnabled     = "basmala_enabled"
+	KeyRandomBackground   = "random_background"
+	KeyShowReference      = "show_reference"
+	KeyUseThemeColors     = "use_theme_colors"
 )
 
 // Config is the complete persistent peace user configuration.
@@ -41,6 +46,11 @@ type Config struct {
 	WBWEnabled         bool   `toml:"wbw_enabled"`
 	WBWLanguage        string `toml:"wbw_language"`
 	WBWTransliteration bool   `toml:"wbw_transliteration"`
+	FollowEnabled      bool   `toml:"follow_enabled"`
+	BasmalaEnabled     bool   `toml:"basmala_enabled"`
+	RandomBackground   bool   `toml:"random_background"`
+	ShowReference      bool   `toml:"show_reference"`
+	UseThemeColors     bool   `toml:"use_theme_colors"`
 }
 
 // DefaultConfig returns the built-in defaults. A missing file or missing keys
@@ -54,6 +64,11 @@ func DefaultConfig() Config {
 		WBWEnabled:         false,
 		WBWLanguage:        quran.DefaultWBWLanguage,
 		WBWTransliteration: false,
+		FollowEnabled:      false,
+		BasmalaEnabled:     false,
+		RandomBackground:   false,
+		ShowReference:      true,
+		UseThemeColors:     false,
 	}
 }
 
@@ -284,6 +299,36 @@ var keySpecs = []keySpec{
 		"Show word-by-word transliteration on wallpapers by default.",
 		func(cfg Config) bool { return cfg.WBWTransliteration },
 		func(cfg *Config, value bool) { cfg.WBWTransliteration = value },
+	),
+	boolKey(
+		KeyFollowEnabled,
+		"Follow wallpaper as each ayah plays.",
+		func(cfg Config) bool { return cfg.FollowEnabled },
+		func(cfg *Config, value bool) { cfg.FollowEnabled = value },
+	),
+	boolKey(
+		KeyBasmalaEnabled,
+		"Show and play the introductory Basmala.",
+		func(cfg Config) bool { return cfg.BasmalaEnabled },
+		func(cfg *Config, value bool) { cfg.BasmalaEnabled = value },
+	),
+	boolKey(
+		KeyRandomBackground,
+		"Shuffle backgrounds between ayahs when following.",
+		func(cfg Config) bool { return cfg.RandomBackground },
+		func(cfg *Config, value bool) { cfg.RandomBackground = value },
+	),
+	boolKey(
+		KeyShowReference,
+		"Show the surah and ayah reference on wallpapers.",
+		func(cfg Config) bool { return cfg.ShowReference },
+		func(cfg *Config, value bool) { cfg.ShowReference = value },
+	),
+	boolKey(
+		KeyUseThemeColors,
+		"Use active Omarchy text colors instead of wallpaper-adapted colors.",
+		func(cfg Config) bool { return cfg.UseThemeColors },
+		func(cfg *Config, value bool) { cfg.UseThemeColors = value },
 	),
 }
 

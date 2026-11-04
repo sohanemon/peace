@@ -496,7 +496,19 @@ func newSettingsCommand(_ Runtime) *cobra.Command {
 					return err
 				}
 			}
-			output := settingsOutput{Translation: cfg.Translation, WBWLanguage: cfg.WBWLanguage}
+			output := settingsOutput{
+				Translation:        cfg.Translation,
+				WBWLanguage:        cfg.WBWLanguage,
+				TranslationEnabled: cfg.TranslationEnabled,
+				WBWEnabled:         cfg.WBWEnabled,
+				WBWTransliteration: cfg.WBWTransliteration,
+				FollowEnabled:      cfg.FollowEnabled,
+				BasmalaEnabled:     cfg.BasmalaEnabled,
+				RandomBackground:   cfg.RandomBackground,
+				ShowReference:      cfg.ShowReference,
+				UseThemeColors:     cfg.UseThemeColors,
+				Reciter:            cfg.Reciter,
+			}
 			if flagBool(cmd, flagJSON) {
 				data, _ := json.Marshal(output)
 				_, _ = cmd.OutOrStdout().Write(data)
@@ -514,8 +526,17 @@ func newSettingsCommand(_ Runtime) *cobra.Command {
 }
 
 type settingsOutput struct {
-	Translation string `json:"translation"`
-	WBWLanguage string `json:"wbw_language"`
+	Translation        string `json:"translation"`
+	WBWLanguage        string `json:"wbw_language"`
+	TranslationEnabled bool   `json:"translation_enabled"`
+	WBWEnabled         bool   `json:"wbw_enabled"`
+	WBWTransliteration bool   `json:"wbw_transliteration"`
+	FollowEnabled      bool   `json:"follow_enabled"`
+	BasmalaEnabled     bool   `json:"basmala_enabled"`
+	RandomBackground   bool   `json:"random_background"`
+	ShowReference      bool   `json:"show_reference"`
+	UseThemeColors     bool   `json:"use_theme_colors"`
+	Reciter            string `json:"reciter"`
 }
 
 var languageNames = map[string]string{

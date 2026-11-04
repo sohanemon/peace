@@ -33,7 +33,19 @@ Item {
   property bool showWordTranslation: false
   property bool showReference: true
   property bool useThemeColors: false
+  property bool settingsLoading: false
   property var settings: hostWidget && hostWidget.settings ? hostWidget.settings : null
+
+  onFollowEnabledChanged: if (!peace.settingsLoading) peace.persistSetting("follow_enabled", followEnabled)
+  onBasmalaEnabledChanged: if (!peace.settingsLoading) peace.persistSetting("basmala_enabled", basmalaEnabled)
+  onRandomBackgroundChanged: if (!peace.settingsLoading) peace.persistSetting("random_background", randomBackground)
+  onShowTranslationChanged: if (!peace.settingsLoading) peace.persistSetting("translation_enabled", showTranslation)
+  onShowWordTranslationChanged: if (!peace.settingsLoading) peace.persistSetting("wbw_enabled", showWordTranslation)
+  onShowReferenceChanged: if (!peace.settingsLoading) peace.persistSetting("show_reference", showReference)
+  onUseThemeColorsChanged: if (!peace.settingsLoading) peace.persistSetting("use_theme_colors", useThemeColors)
+  onReciterIDChanged: if (!peace.settingsLoading) peace.persistSetting("reciter", reciterID)
+  onSelectedTranslationChanged: if (!peace.settingsLoading) peace.persistSetting("translation", selectedTranslation)
+  onSelectedWBWLanguageChanged: if (!peace.settingsLoading) peace.persistSetting("wbw_language", selectedWBWLanguage)
 
   property string selectedTranslation: {
     if (settings && settings.translation) return String(settings.translation)
@@ -275,6 +287,10 @@ Item {
     peace.captureArtworkForListen(args)
   }
 
+  function persistSetting(key, value) {
+    peace.runPeace(["config", "set", key, String(value)])
+  }
+
   function persistSettings(newTranslation, newWbwLang) {
     if (newTranslation !== undefined && newTranslation !== null && String(newTranslation) !== "") {
       peace.selectedTranslation = String(newTranslation)
@@ -292,7 +308,6 @@ Item {
       peace.bar.shell.updateEntryInline(peace.moduleName, next)
       if (peace.hostWidget) peace.hostWidget.settings = next
     }
-    peace.runPeace(["settings"].concat(peace.contentFlags()))
     peace.reRenderWallpaper()
   }
 
@@ -442,6 +457,7 @@ Item {
   }
 
   function applyLoadedSettingsJson(text) {
+    peace.settingsLoading = true
     try {
       var data = JSON.parse(text)
       if (data && typeof data === "object") {
@@ -451,9 +467,21 @@ Item {
         if (data.wbw_language && (!peace.settings || !peace.settings.wbwLanguage)) {
           peace.selectedWBWLanguage = String(data.wbw_language)
         }
+        if (typeof data.reciter !== "undefined" && (!peace.settings || !peace.settings.reciter)) {
+          peace.reciterID = String(data.reciter)
+        }
+        if (typeof data.translation_enabled !== "undefined") peace.showTranslation = data.translation_enabled
+        if (typeof data.wbw_enabled !== "undefined") peace.showWordTranslation = data.wbw_enabled
+        if (typeof data.follow_enabled !== "undefined") peace.followEnabled = data.follow_enabled
+        if (typeof data.basmala_enabled !== "undefined") peace.basmalaEnabled = data.basmala_enabled
+        if (typeof data.random_background !== "undefined") peace.randomBackground = data.random_background
+        if (typeof data.show_reference !== "undefined") peace.showReference = data.show_reference
+        if (typeof data.use_theme_colors !== "undefined") peace.useThemeColors = data.use_theme_colors
       }
     } catch (e) {
       // ignore
+    } finally {
+      peace.settingsLoading = false
     }
   }
 
