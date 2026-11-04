@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"io.github.sohanemon/peace/internal/config"
 	"io.github.sohanemon/peace/internal/quran"
 )
 
@@ -26,10 +27,41 @@ func Run(args []string) error {
 	if err != nil {
 		return err
 	}
-	runtime := Runtime{Config: cfg}
+	settings := config.DefaultConfig()
+	loaded, loadErr := config.Load()
+	if loadErr == nil {
+		loaded, loadErr = config.EnvOverrides(loaded)
+	}
+	if loadErr != nil {
+		if !settingsOptional(args) {
+			return fmt.Errorf("peace: %w", loadErr)
+		}
+	} else {
+		settings = loaded
+	}
+	runtime := Runtime{Config: cfg, Settings: settings}
 	cmd := newRootCommand(runtime)
 	cmd.SetArgs(args)
 	return executeRoot(cmd)
+}
+
+func settingsOptional(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			return true
+		}
+	}
+	switch args[0] {
+	case "help":
+		return true
+	case "config":
+		return len(args) > 1 && (args[1] == "path" || args[1] == "edit")
+	default:
+		return false
+	}
 }
 
 type cliUsageError struct{ err error }
@@ -74,6 +106,7 @@ func newRootCommand(runtime Runtime) *cobra.Command {
 	root.AddCommand(newListCommand(runtime, "translations", "List available translations"))
 	root.AddCommand(newListCommand(runtime, "languages", "List available word-by-word languages"))
 	root.AddCommand(newSettingsCommand(runtime))
+	root.AddCommand(newConfigCommand(runtime))
 	root.AddCommand(&cobra.Command{Use: "pause", Short: "Pause or resume audio playback", Long: "Toggle pause on the current recitation.", Example: "  peace pause", Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.pause() }})
 	root.AddCommand(&cobra.Command{Use: "stop", Short: "Stop audio playback", Long: "Stop recitation and any pending wallpaper preparation.", Example: "  peace stop", Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.stop() }})
 	root.AddCommand(&cobra.Command{Use: "status", Short: "Show playback status", Long: "Show the current ayah and playback state.", Example: "  peace status", Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.status() }})
@@ -89,7 +122,7 @@ func newRootCommand(runtime Runtime) *cobra.Command {
 				Render:      wallpaperRenderOptions(cmd),
 			})
 		}}
-		addWallpaperFlags(cmd)
+		addWallpaperFlags(cmd, runtime)
 		root.AddCommand(cmd)
 	}
 	root.AddCommand(&cobra.Command{Use: "__follow", Hidden: true, Args: noArgs, RunE: func(*cobra.Command, []string) error { return runtime.follow() }})
@@ -145,12 +178,14 @@ func editDistance(a, b string) int {
 }
 
 func newListenCommand(runtime Runtime) *cobra.Command {
+	settings := runtime.effectiveSettings()
 	options := Options{
-		Reciter: os.Getenv("PEACE_RECITER"), Buffer: 10, Lead: 2, Jobs: 2,
-		Render: RenderOptions{ShowTranslation: true, ShowReference: true},
-	}
-	if options.Reciter == "" {
-		options.Reciter = quran.DefaultReciterID
+		Reciter: settings.Reciter, Buffer: 10, Lead: 2, Jobs: 2,
+		Render: RenderOptions{
+			ShowTranslation:     settings.TranslationEnabled,
+			ShowWordTranslation: settings.WBWEnabled,
+			ShowReference:       true,
+		},
 	}
 	cmd := &cobra.Command{
 		Use:     "listen SURAH[:AYAH|:START-END|:START-]",
@@ -202,8 +237,8 @@ func newListenCommand(runtime Runtime) *cobra.Command {
 	cmd.Flags().BoolVar(&options.Follow, "follow", false, "Update wallpaper as each ayah plays")
 	cmd.Flags().BoolVar(&options.Random, "random", false, "Shuffle backgrounds between ayahs (requires --follow)")
 	cmd.Flags().BoolVar(&options.Render.UseTheme, "use-theme", false, "Use active Omarchy colors instead of wallpaper-adapted colors")
-	cmd.Flags().BoolVar(&options.Render.ShowTranslation, "show-translation", true, "Show the ayah translation on the wallpaper")
-	cmd.Flags().BoolVar(&options.Render.ShowWordTranslation, "show-word-translation", false, "Show word-by-word meanings on the wallpaper")
+	cmd.Flags().BoolVar(&options.Render.ShowTranslation, "show-translation", options.Render.ShowTranslation, "Show the ayah translation on the wallpaper")
+	cmd.Flags().BoolVar(&options.Render.ShowWordTranslation, "show-word-translation", options.Render.ShowWordTranslation, "Show word-by-word meanings on the wallpaper")
 	cmd.Flags().BoolVar(&options.Render.ShowReference, "show-reference", true, "Show the surah and ayah reference on the wallpaper")
 	cmd.Flags().BoolVar(&options.Basmala, "basmala", false, "Show and play the introductory Basmala")
 	cmd.Flags().StringVar(&options.Reciter, "reciter", options.Reciter, "Reciter ID")
@@ -236,15 +271,16 @@ func newWallpaperCommand(runtime Runtime, use, short, example string) *cobra.Com
 				Render:      wallpaperRenderOptions(cmd),
 			})
 		}}
-	addWallpaperFlags(cmd)
+	addWallpaperFlags(cmd, runtime)
 	return cmd
 }
 
-func addWallpaperFlags(cmd *cobra.Command) {
+func addWallpaperFlags(cmd *cobra.Command, runtime Runtime) {
+	settings := runtime.effectiveSettings()
 	cmd.Flags().Bool("random", false, "Choose a random current background")
 	cmd.Flags().Bool("use-theme", false, "Use active Omarchy colors instead of wallpaper-adapted colors")
-	cmd.Flags().Bool("show-translation", true, "Show the ayah translation")
-	cmd.Flags().Bool("show-word-translation", false, "Show word-by-word meanings")
+	cmd.Flags().Bool("show-translation", settings.TranslationEnabled, "Show the ayah translation")
+	cmd.Flags().Bool("show-word-translation", settings.WBWEnabled, "Show word-by-word meanings")
 	cmd.Flags().Bool("show-reference", true, "Show the surah and ayah reference")
 	cmd.Flags().String("wbw-language", "", "Word-by-word meaning language")
 }
@@ -281,10 +317,7 @@ func resolveTranslation(cmd *cobra.Command, runtime Runtime) string {
 			return val
 		}
 	}
-	if env := os.Getenv("PEACE_TRANSLATION"); env != "" {
-		return env
-	}
-	return runtime.readSettings().Translation
+	return runtime.effectiveSettings().Translation
 }
 
 func resolveWBWLanguage(cmd *cobra.Command, runtime Runtime) string {
@@ -293,10 +326,7 @@ func resolveWBWLanguage(cmd *cobra.Command, runtime Runtime) string {
 			return val
 		}
 	}
-	if env := os.Getenv("PEACE_WBW_LANGUAGE"); env != "" {
-		return env
-	}
-	return runtime.readSettings().WBWLanguage
+	return runtime.effectiveSettings().WBWLanguage
 }
 
 func newWordsCommand(runtime Runtime) *cobra.Command {
@@ -423,38 +453,49 @@ func newListCommand(runtime Runtime, name, short string) *cobra.Command {
 	return cmd
 }
 
-func newSettingsCommand(runtime Runtime) *cobra.Command {
+func newSettingsCommand(_ Runtime) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "settings",
 		Short:   "View or update persistent peace settings",
-		Long:    "Show current settings or update translation and word-by-word language.",
+		Long:    "Show current settings or update translation and word-by-word language. Settings are stored in config.toml; use `peace config` for the full schema.",
 		Example: "  peace settings\n  peace settings --translation 131\n  peace settings --wbw-language ur",
 		Args:    noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			tr := flagString(cmd, "translation")
-			wbw := flagString(cmd, "wbw-language")
-			if tr != "" || wbw != "" {
-				updated, err := runtime.updateSettings(tr, wbw)
-				if err != nil {
+			cfg, err := config.Load()
+			if err != nil {
+				return fmt.Errorf("peace settings: %w", err)
+			}
+			translation := flagString(cmd, "translation")
+			wbwLanguage := flagString(cmd, "wbw-language")
+			changed := false
+			if translation != "" {
+				if err := config.Assign(&cfg, "translation", translation); err != nil {
 					return fmt.Errorf("peace settings: %w", err)
 				}
-				if flagBool(cmd, "json") {
-					data, _ := json.Marshal(updated)
-					_, _ = cmd.OutOrStdout().Write(data)
-					_, _ = cmd.OutOrStdout().Write([]byte("\n"))
-					return nil
-				}
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "translation: %s\nwbw_language: %s\n", updated.Translation, updated.WBWLanguage)
-				return nil
+				changed = true
 			}
-			current := runtime.readSettings()
+			if wbwLanguage != "" {
+				if err := config.Assign(&cfg, "wbw_language", wbwLanguage); err != nil {
+					return fmt.Errorf("peace settings: %w", err)
+				}
+				changed = true
+			}
+			if changed {
+				if err := config.Validate(cfg); err != nil {
+					return fmt.Errorf("peace settings: %w", err)
+				}
+				if err := config.Save(cfg); err != nil {
+					return fmt.Errorf("peace settings: %w", err)
+				}
+			}
+			output := settingsOutput{Translation: cfg.Translation, WBWLanguage: cfg.WBWLanguage}
 			if flagBool(cmd, "json") {
-				data, _ := json.Marshal(current)
+				data, _ := json.Marshal(output)
 				_, _ = cmd.OutOrStdout().Write(data)
 				_, _ = cmd.OutOrStdout().Write([]byte("\n"))
 				return nil
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "translation: %s\nwbw_language: %s\n", current.Translation, current.WBWLanguage)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "translation: %s\nwbw_language: %s\n", output.Translation, output.WBWLanguage)
 			return nil
 		},
 	}
@@ -462,6 +503,11 @@ func newSettingsCommand(runtime Runtime) *cobra.Command {
 	cmd.Flags().String("wbw-language", "", "Set word-by-word meaning language")
 	cmd.Flags().Bool("json", false, "Output settings as JSON")
 	return cmd
+}
+
+type settingsOutput struct {
+	Translation string `json:"translation"`
+	WBWLanguage string `json:"wbw_language"`
 }
 
 var languageNames = map[string]string{
@@ -503,7 +549,13 @@ func loadConfig() (Config, error) {
 		pluginDir = filepath.Dir(executable)
 	}
 	state := filepath.Join(home, ".local", "state", "peace")
+	if stateHome := os.Getenv("XDG_STATE_HOME"); stateHome != "" {
+		state = filepath.Join(stateHome, "peace")
+	}
 	cache := filepath.Join(home, ".cache", "peace")
+	if cacheHome, cacheErr := os.UserCacheDir(); cacheErr == nil {
+		cache = filepath.Join(cacheHome, "peace")
+	}
 	socket := filepath.Join(os.TempDir(), "peace-mpv-"+strconv.Itoa(os.Getuid())+".sock")
 	if runtimeDir := os.Getenv("XDG_RUNTIME_DIR"); runtimeDir != "" {
 		socket = filepath.Join(runtimeDir, "peace-mpv.sock")

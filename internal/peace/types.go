@@ -1,5 +1,7 @@
 package peace
 
+import "io.github.sohanemon/peace/internal/config"
+
 // Config holds the runtime configuration for the peace application.
 type Config struct {
 	Home      string
@@ -57,5 +59,13 @@ type PlayState struct {
 
 // Runtime ties configuration to the running peace instance.
 type Runtime struct {
-	Config Config
+	Config   Config
+	Settings config.Config
+}
+
+func (r Runtime) effectiveSettings() config.Config {
+	if r.Settings == (config.Config{}) {
+		return config.DefaultConfig()
+	}
+	return r.Settings
 }

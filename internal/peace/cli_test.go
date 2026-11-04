@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"io.github.sohanemon/peace/internal/config"
 )
 
 func TestRootHelpListsCommands(t *testing.T) {
@@ -18,7 +20,7 @@ func TestRootHelpListsCommands(t *testing.T) {
 		if err := executeRoot(cmd); err != nil {
 			t.Fatalf("execute root help with args %v: %v", args, err)
 		}
-		for _, command := range []string{"listen", "words", "reciters", "translations", "languages", "settings", "pause", "stop", "status", "wallpaper", "random", "next", "prev", "current"} {
+		for _, command := range []string{"listen", "words", "reciters", "translations", "languages", "settings", "config", "pause", "stop", "status", "wallpaper", "random", "next", "prev", "current"} {
 			if !strings.Contains(stdout.String(), command) {
 				t.Errorf("root help missing %q:\n%s", command, stdout.String())
 			}
@@ -212,54 +214,50 @@ func TestUnexpectedCommandArgumentShowsUsage(t *testing.T) {
 }
 
 func TestSettingsCommandAndPersistence(t *testing.T) {
-	stateDir := t.TempDir()
-	runtime := Runtime{Config: Config{StateDir: stateDir}}
+	setConfigHome(t)
+	runtime := Runtime{Config: Config{StateDir: t.TempDir()}, Settings: config.DefaultConfig()}
+	run := func(args ...string) settingsOutput {
+		t.Helper()
+		var stdout bytes.Buffer
+		cmd := newRootCommand(runtime)
+		cmd.SetOut(&stdout)
+		cmd.SetArgs(append([]string{"settings", "--json"}, args...))
+		if err := executeRoot(cmd); err != nil {
+			t.Fatalf("settings %v: %v", args, err)
+		}
+		var output settingsOutput
+		if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+			t.Fatalf("unmarshal settings json: %v", err)
+		}
+		return output
+	}
 
-	// 1. Initial read should return defaults
-	initial := runtime.readSettings()
-	if initial.Translation != "20" || initial.WBWLanguage != "en" {
+	if initial := run(); initial.Translation != "20" || initial.WBWLanguage != "en" {
 		t.Errorf("initial settings = %+v, want translation: 20, wbw_language: en", initial)
 	}
-
-	// 2. Update translation only -> translation changes, wbw_language remains en
-	updatedTr, err := runtime.updateSettings("131", "")
+	if updated := run("--translation", "131"); updated.Translation != "131" || updated.WBWLanguage != "en" {
+		t.Errorf("after translation update = %+v, want translation: 131, wbw_language: en", updated)
+	}
+	if updated := run("--wbw-language", "ur"); updated.Translation != "131" || updated.WBWLanguage != "ur" {
+		t.Errorf("after wbw update = %+v, want translation: 131, wbw_language: ur", updated)
+	}
+	saved, err := config.Load()
 	if err != nil {
-		t.Fatalf("updateSettings translation: %v", err)
+		t.Fatalf("load saved config: %v", err)
 	}
-	if updatedTr.Translation != "131" || updatedTr.WBWLanguage != "en" {
-		t.Errorf("after translation update = %+v, want translation: 131, wbw_language: en", updatedTr)
-	}
-
-	// 3. Update wbwLanguage only -> wbwLanguage changes, translation remains 131 (independent!)
-	updatedWBW, err := runtime.updateSettings("", "ur")
-	if err != nil {
-		t.Fatalf("updateSettings wbw: %v", err)
-	}
-	if updatedWBW.Translation != "131" || updatedWBW.WBWLanguage != "ur" {
-		t.Errorf("after wbwLanguage update = %+v, want translation: 131, wbw_language: ur", updatedWBW)
-	}
-
-	// 4. Read back settings from disk
-	saved := runtime.readSettings()
 	if saved.Translation != "131" || saved.WBWLanguage != "ur" {
-		t.Errorf("readSettings from disk = %+v, want translation: 131, wbw_language: ur", saved)
+		t.Errorf("saved config = %+v, want translation: 131, wbw_language: ur", saved)
 	}
+}
 
-	// 5. Run settings command via CLI with --json
-	var stdout bytes.Buffer
-	cmd := newRootCommand(runtime)
-	cmd.SetOut(&stdout)
-	cmd.SetArgs([]string{"settings", "--json"})
-	if err := executeRoot(cmd); err != nil {
-		t.Fatalf("settings --json: %v", err)
-	}
-	var fromCLI UserSettings
-	if err := json.Unmarshal(stdout.Bytes(), &fromCLI); err != nil {
-		t.Fatalf("unmarshal settings json: %v", err)
-	}
-	if fromCLI.Translation != "131" || fromCLI.WBWLanguage != "ur" {
-		t.Errorf("settings from CLI = %+v, want translation: 131, wbw_language: ur", fromCLI)
-	}
+func setConfigHome(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_CONFIG_HOME", root+"/config")
+	t.Setenv("XDG_STATE_HOME", root+"/state")
+	t.Setenv("XDG_CACHE_HOME", root+"/cache")
+	return root
 }
 
 func TestWallpaperCurrentValidAction(t *testing.T) {
