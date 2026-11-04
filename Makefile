@@ -18,7 +18,8 @@ update: test build
 	command -v rsync >/dev/null
 	command -v omarchy-restart-shell >/dev/null
 	mkdir -p "$(PLUGIN_DIR)/bin"
-	rsync -a --exclude='/.git/' --exclude='/.agents/' --exclude='/.codex/' --exclude='/.aws/' --exclude='/bin/peace' ./ "$(PLUGIN_DIR)/"
+	# HACK: --delete prunes stale plugin files (old components/qmldir gate dir imports)
+	rsync -a --delete --exclude='/.git/' --exclude='/.agents/' --exclude='/.codex/' --exclude='/.aws/' --exclude='/bin/peace' ./ "$(PLUGIN_DIR)/"
 	install -m 755 bin/peace "$(PLUGIN_DIR)/bin/peace"
 	omarchy-restart-shell
 

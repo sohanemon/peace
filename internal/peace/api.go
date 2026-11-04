@@ -2,18 +2,17 @@ package peace
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math/rand"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"time"
+
+	"io.github.sohanemon/peace/internal/quran"
 )
 
 var referencePattern = regexp.MustCompile(`^([0-9]+)(?::([0-9]+)(?:-([0-9]*))?)?$`)
@@ -26,9 +25,10 @@ func (r Runtime) listenOptions(o Options) error {
 	if err := r.stop(); err != nil {
 		return err
 	}
+	client := quran.New(r.Config.CacheDir)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	counts, err := r.surahCounts(ctx)
+	counts, err := r.surahCounts(ctx, client)
 	if err != nil {
 		return fmt.Errorf("peace listen: unable to fetch surah list: %w", err)
 	}
@@ -45,13 +45,13 @@ func (r Runtime) listenOptions(o Options) error {
 	if start > end {
 		return errors.New("peace listen: ayah range start must be less than or equal to end")
 	}
-	urls, err := r.audioURLs(ctx, surah, start, end, o.Reciter)
+	urls, err := r.audioURLs(ctx, client, surah, start, end, o.Reciter)
 	if err != nil {
 		return fmt.Errorf("peace listen: unable to fetch audio for surah %d (%s): %w", surah, o.Reciter, err)
 	}
 	introURL := ""
 	if shouldUseBasmala(o.Basmala, surah, start) {
-		introURL, err = r.basmalaAudioURL(ctx, o.Reciter)
+		introURL, err = r.basmalaAudioURL(ctx, client, o.Reciter)
 		if err != nil {
 			return fmt.Errorf("peace listen: unable to fetch introductory Basmala for %s: %w", o.Reciter, err)
 		}
@@ -66,7 +66,7 @@ func (r Runtime) listenOptions(o Options) error {
 			return fmt.Errorf("peace listen: snapshot current wallpaper: %w", err)
 		}
 	}
-	state := PlayState{Surah: surah, Start: start, End: end, Reciter: o.Reciter, Follow: o.Follow, Random: o.Random, Render: o.Render, Basmala: o.Basmala, BaseImage: baseImage, Preparing: o.Follow}
+	state := PlayState{Surah: surah, Start: start, End: end, Reciter: o.Reciter, Translation: o.Translation, WBWLanguage: o.WBWLanguage, Follow: o.Follow, Random: o.Random, Render: o.Render, Basmala: o.Basmala, BaseImage: baseImage, Preparing: o.Follow}
 	if o.Follow && o.Random {
 		state.RandomSources = r.backgroundCandidates()
 		rand.Shuffle(len(state.RandomSources), func(i, j int) {
@@ -85,7 +85,8 @@ func (r Runtime) listenOptions(o Options) error {
 			if wallpaperBase == "" {
 				wallpaperBase = baseImage
 			}
-			if err := r.prepareInitialWallpaper(surah, ayah, wallpaperBase, o.Basmala, o.Render); err != nil {
+			request := wallpaperRequest{Client: client, Translation: o.Translation, WBWLanguage: o.WBWLanguage, Surah: surah, Ayah: ayah, BaseImage: wallpaperBase, Basmala: o.Basmala, Render: o.Render}
+			if err := r.prepareInitialWallpaper(ctx, request); err != nil {
 				if ayah == start {
 					return fmt.Errorf("peace listen: prepare first ayah wallpaper: %w", err)
 				}
@@ -183,110 +184,45 @@ func parseReference(ref string) (int, int, int, error) {
 	return surah, start, end, nil
 }
 
-func (r Runtime) surahCounts(ctx context.Context) (map[int]int, error) {
-	path := filepath.Join(r.Config.CacheDir, "surahs.json")
-	var cached []Surah
-	if info, err := os.Stat(path); err == nil && time.Since(info.ModTime()) < 30*24*time.Hour {
-		if data, readErr := os.ReadFile(path); readErr == nil && json.Unmarshal(data, &cached) == nil {
-			return countMap(cached), nil
-		}
-	}
-	var response APIResponse
-	if err := getJSON(ctx, "https://api.alquran.cloud/v1/surah", &response); err != nil {
+func (r Runtime) surahCounts(ctx context.Context, client *quran.Client) (map[int]int, error) {
+	chapters, err := client.Chapters(ctx)
+	if err != nil {
 		return nil, err
 	}
-	if err := json.Unmarshal(response.Data, &cached); err != nil {
-		return nil, err
-	}
-	if len(cached) != 114 {
+	if len(chapters) != 114 {
 		return nil, errors.New("incomplete surah list received")
 	}
-	data, _ := json.Marshal(cached)
-	if err := writeAtomic(path, data, 0o600); err != nil {
-		return nil, err
+	out := make(map[int]int, len(chapters))
+	for _, chapter := range chapters {
+		out[chapter.Number] = chapter.Verses
 	}
-	return countMap(cached), nil
+	return out, nil
 }
 
-func countMap(surahs []Surah) map[int]int {
-	out := make(map[int]int, len(surahs))
-	for _, surah := range surahs {
-		out[surah.Number] = surah.NumberOfAyahs
-	}
-	return out
-}
-
-func (r Runtime) audioURLs(ctx context.Context, surah, start, end int, reciter string) ([]string, error) {
-	var response APIResponse
-	url := fmt.Sprintf("https://api.alquran.cloud/v1/surah/%d/%s", surah, reciter)
-	if err := getJSON(ctx, url, &response); err != nil {
-		return nil, err
-	}
-	var data SurahAudio
-	if err := json.Unmarshal(response.Data, &data); err != nil {
-		return nil, err
-	}
+func (r Runtime) audioURLs(ctx context.Context, client *quran.Client, surah, start, end int, reciter string) ([]string, error) {
 	urls := make([]string, 0, end-start+1)
-	for _, ayah := range data.Ayahs {
-		if ayah.NumberInSurah >= start && ayah.NumberInSurah <= end {
-			if ayah.Audio == "" {
-				return nil, errors.New("audio URL missing")
-			}
-			urls = append(urls, ayah.Audio)
+	for ayah := start; ayah <= end; ayah++ {
+		url, err := client.AudioURL(ctx, reciter, surah, ayah)
+		if err != nil {
+			return nil, err
 		}
-	}
-	if len(urls) != end-start+1 {
-		return nil, errors.New("audio URLs are incomplete")
+		if url == "" {
+			return nil, errors.New("audio URL missing")
+		}
+		urls = append(urls, url)
 	}
 	return urls, nil
 }
 
-func (r Runtime) basmalaAudioURL(ctx context.Context, reciter string) (string, error) {
-	var response APIResponse
-	url := fmt.Sprintf("https://api.alquran.cloud/v1/ayah/1:1/%s", reciter)
-	if err := getJSON(ctx, url, &response); err != nil {
+func (r Runtime) basmalaAudioURL(ctx context.Context, client *quran.Client, reciter string) (string, error) {
+	url, err := client.AudioURL(ctx, reciter, 1, 1)
+	if err != nil {
 		return "", err
 	}
-	var data struct {
-		Audio string `json:"audio"`
-	}
-	if err := json.Unmarshal(response.Data, &data); err != nil {
-		return "", err
-	}
-	if data.Audio == "" {
+	if url == "" {
 		return "", errors.New("Basmala audio URL missing")
 	}
-	return data.Audio, nil
-}
-
-var httpClient = &http.Client{Timeout: 30 * time.Second}
-
-// openURL performs a GET with context cancellation and a 2xx status check.
-func openURL(ctx context.Context, url string) (*http.Response, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	response, err := httpClient.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		_ = response.Body.Close()
-		return nil, fmt.Errorf("HTTP %s", response.Status)
-	}
-	return response, nil
-}
-
-func getJSON(ctx context.Context, url string, target any) error {
-	response, err := openURL(ctx, url)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = response.Body.Close()
-	}()
-	return json.NewDecoder(io.LimitReader(response.Body, 16<<20)).Decode(target)
+	return url, nil
 }
 
 func writeAtomic(path string, data []byte, mode os.FileMode) error {

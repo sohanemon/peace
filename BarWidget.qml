@@ -15,6 +15,7 @@ BarWidget {
     panelLoader.item.hostWidget = root
     panelLoader.item.anchorItem = buttonItem
     panelLoader.item.bar = root.bar
+    if ("settings" in panelLoader.item) panelLoader.item.settings = root.settings
   }
 
   function open() {
@@ -36,6 +37,7 @@ BarWidget {
   implicitWidth: buttonItem.implicitWidth
   implicitHeight: barSize
   onBarChanged: injectPanel()
+  onSettingsChanged: injectPanel()
 
   BarIconButton {
     id: buttonItem

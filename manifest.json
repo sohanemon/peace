@@ -14,5 +14,17 @@
     "category": "Media",
     "allowMultiple": false,
     "defaultSection": "right"
+  },
+  "settings": {
+    "translation": {
+      "type": "string",
+      "default": "20",
+      "description": "Selected Quran.com translation ID"
+    },
+    "wbwLanguage": {
+      "type": "string",
+      "default": "en",
+      "description": "Selected word-by-word meaning language"
+    }
   }
 }

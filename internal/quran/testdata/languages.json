@@ -1,0 +1,44 @@
+{
+  "languages": [
+    {
+      "id": 38,
+      "name": "English",
+      "iso_code": "en",
+      "native_name": "English",
+      "direction": "ltr",
+      "translations_count": 19
+    },
+    {
+      "id": 174,
+      "name": "Urdu",
+      "iso_code": "ur",
+      "native_name": "اردو",
+      "direction": "rtl",
+      "translations_count": 9
+    },
+    {
+      "id": 20,
+      "name": "Bengali",
+      "iso_code": "bn",
+      "native_name": "বাংলা",
+      "direction": "ltr",
+      "translations_count": 7
+    },
+    {
+      "id": 67,
+      "name": "French",
+      "iso_code": "fr",
+      "native_name": "Français",
+      "direction": "ltr",
+      "translations_count": 5
+    },
+    {
+      "id": 160,
+      "name": "Spanish",
+      "iso_code": "es",
+      "native_name": "Español",
+      "direction": "ltr",
+      "translations_count": 3
+    }
+  ]
+}

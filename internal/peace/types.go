@@ -1,8 +1,6 @@
 package peace
 
-import (
-	"encoding/json"
-)
+import "io.github.sohanemon/peace/internal/config"
 
 // Config holds the runtime configuration for the peace application.
 type Config struct {
@@ -15,21 +13,24 @@ type Config struct {
 
 // Options holds the configurable options for the listen command.
 type Options struct {
-	Reference string
-	Reciter   string
-	Follow    bool
-	Random    bool
-	Basmala   bool
-	Render    RenderOptions
-	Buffer    int
-	Lead      int
-	Jobs      int
+	Reference   string
+	Reciter     string
+	Translation string
+	WBWLanguage string
+	Follow      bool
+	Random      bool
+	Basmala     bool
+	Render      RenderOptions
+	Buffer      int
+	Lead        int
+	Jobs        int
 }
 
 type RenderOptions struct {
-	UseTheme        bool `json:"use_theme,omitempty"`
-	ShowTranslation bool `json:"show_translation"`
-	ShowReference   bool `json:"show_reference"`
+	UseTheme            bool `json:"use_theme,omitempty"`
+	ShowTranslation     bool `json:"show_translation"`
+	ShowWordTranslation bool `json:"show_word_translation,omitempty"`
+	ShowReference       bool `json:"show_reference"`
 }
 
 // PlayState represents the current playback state of a recitation session.
@@ -38,6 +39,8 @@ type PlayState struct {
 	Start         int           `json:"start"`
 	End           int           `json:"end"`
 	Reciter       string        `json:"reciter"`
+	Translation   string        `json:"translation"`
+	WBWLanguage   string        `json:"wbw_language,omitempty"`
 	Follow        bool          `json:"follow"`
 	Random        bool          `json:"random,omitempty"`
 	RandomSources []string      `json:"random_sources,omitempty"`
@@ -54,26 +57,15 @@ type PlayState struct {
 	Appended      int           `json:"appended"`
 }
 
-// APIResponse is the envelope returned by the Quran API.
-type APIResponse struct {
-	Data json.RawMessage `json:"data"`
-}
-
-// Surah describes a single surah from the Quran API.
-type Surah struct {
-	Number        int `json:"number"`
-	NumberOfAyahs int `json:"numberOfAyahs"`
-}
-
-// SurahAudio groups the audio URLs for the ayahs of a surah.
-type SurahAudio struct {
-	Ayahs []struct {
-		NumberInSurah int    `json:"numberInSurah"`
-		Audio         string `json:"audio"`
-	} `json:"ayahs"`
-}
-
 // Runtime ties configuration to the running peace instance.
 type Runtime struct {
-	Config Config
+	Config   Config
+	Settings config.Config
+}
+
+func (r Runtime) effectiveSettings() config.Config {
+	if r.Settings == (config.Config{}) {
+		return config.DefaultConfig()
+	}
+	return r.Settings
 }
