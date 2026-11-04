@@ -2,11 +2,15 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 
-// REUSABLE: searchable picker card for full-panel list selection.
+// REUSABLE: searchable picker page for full-panel list selection.
 // Consumers provide generic field accessors (valueOf/titleOf/...)
 // and react to the selected/closeRequested/searchEdited signals.
 BorderSurface {
   id: picker
+
+  color: "transparent"
+  radius: 0
+  borderSpec: Border.none()
 
   property string title: ""
   property string countSuffix: "available"
@@ -51,14 +55,9 @@ BorderSurface {
       picker.selected(picker.valueOf(items[index]))
   }
 
-  // NOTE: swallow clicks inside the card so they don't reach the dim layer
-  MouseArea {
-    anchors.fill: parent
-  }
-
+  // NOTE: page layout, so the back button sits in the header instead of a card edge
   Item {
     anchors.fill: parent
-    anchors.margins: Style.space(14)
 
     Row {
       id: headerRow
@@ -67,9 +66,23 @@ BorderSurface {
       anchors.left: parent.left
       anchors.right: parent.right
       height: Style.space(32)
+      spacing: Style.space(8)
+
+      Button {
+        id: backButton
+
+        width: Style.space(32)
+        height: Style.space(32)
+        anchors.verticalCenter: parent.verticalCenter
+        iconText: "󰁍"
+        iconSize: Style.font.icon
+        tooltipText: "Back (Esc)"
+        Accessible.name: picker.closeName
+        onClicked: picker.closeRequested()
+      }
 
       Column {
-        width: parent.width - closeButton.width - parent.spacing
+        width: parent.width - backButton.width - parent.spacing
         anchors.verticalCenter: parent.verticalCenter
         spacing: Style.space(2)
 
@@ -90,19 +103,6 @@ BorderSurface {
           font.family: picker.fontFamily
           font.pixelSize: Style.font.caption
         }
-      }
-
-      Button {
-        id: closeButton
-
-        width: Style.space(32)
-        height: Style.space(32)
-        anchors.verticalCenter: parent.verticalCenter
-        iconText: "󰅖"
-        iconSize: Style.font.icon
-        tooltipText: "Close (Esc)"
-        Accessible.name: picker.closeName
-        onClicked: picker.closeRequested()
       }
     }
 

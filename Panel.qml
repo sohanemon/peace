@@ -19,6 +19,7 @@ Panel {
   readonly property string peaceExecutable: decodeURIComponent(String(Qt.resolvedUrl("bin/peace")).replace(/^file:\/\//, ""))
   property var settings: hostWidget && hostWidget.settings ? hostWidget.settings : null
   property bool settingsPageOpen: false
+  readonly property bool pickerPageOpen: model.translationPickerOpen || model.wbwPickerOpen
 
   PeaceModel {
     id: model
@@ -85,7 +86,7 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(430))
-    contentHeight: panel.fittedContentHeight(root.settingsPageOpen ? settingsPage.implicitHeight : content.implicitHeight)
+    contentHeight: panel.fittedContentHeight(root.pickerPageOpen ? pickerPage.implicitHeight : (root.settingsPageOpen ? settingsPage.implicitHeight : content.implicitHeight))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -93,7 +94,7 @@ Panel {
       anchors.fill: parent
       blocked: recitationControls.blocksKeys || settingsPage.blocksKeys || model.translationPickerOpen || model.wbwPickerOpen
       onCloseRequested: {
-        if (model.translationPickerOpen || model.wbwPickerOpen) {
+        if (root.pickerPageOpen) {
           root.closePickers()
         } else if (root.settingsPageOpen) {
           root.closeSettings()
@@ -105,7 +106,7 @@ Panel {
       Column {
         id: content
 
-        visible: !root.settingsPageOpen
+        visible: !root.settingsPageOpen && !root.pickerPageOpen
         width: parent.width
         spacing: Style.space(12)
 
@@ -178,7 +179,7 @@ Panel {
       SettingsPage {
         id: settingsPage
 
-        visible: root.settingsPageOpen
+        visible: root.settingsPageOpen && !root.pickerPageOpen
         foreground: model.foreground
         fontFamily: model.fontFamily
         followEnabled: model.followEnabled
@@ -202,12 +203,10 @@ Panel {
         onWbwGearRequested: root.openWBWPicker()
       }
 
-      PickerOverlay {
-        id: pickerOverlay
+      PickerPage {
+        id: pickerPage
 
-        anchors.fill: parent
-        z: 100
-        visible: model.translationPickerOpen || model.wbwPickerOpen
+        visible: root.pickerPageOpen
         foreground: model.foreground
         fontFamily: model.fontFamily
         translationOpen: model.translationPickerOpen

@@ -3,9 +3,9 @@ import qs.Commons
 import qs.Ui
 import "ui"
 
-// Overlay hosting the two search pickers over the whole panel.
+// Page hosting the two search pickers, shown in place of the settings page.
 Item {
-  id: overlay
+  id: page
 
   property bool translationOpen: false
   property bool wbwOpen: false
@@ -22,9 +22,10 @@ Item {
   property color foreground: Color.foreground
   property string fontFamily: "monospace"
 
-  // INFO: re-exported so the panel can filter against live search text
-  readonly property alias translationSearchQuery: translationPickerCard.searchQuery
-  readonly property alias wbwSearchQuery: wbwPickerCard.searchQuery
+  // INFO: fixed page height so the panel can size itself while a list scrolls
+  implicitHeight: Style.space(440)
+
+  width: parent.width
 
   signal closeRequested()
   signal translationSelected(string value)
@@ -32,30 +33,18 @@ Item {
   signal translationSearchEdited(string text)
   signal wbwSearchEdited(string text)
 
-  Rectangle {
-    anchors.fill: parent
-    color: Qt.rgba(0, 0, 0, 0.72)
-    radius: Style.cornerRadius
-
-    MouseArea {
-      anchors.fill: parent
-      onClicked: overlay.closeRequested()
-    }
-  }
-
   SearchablePicker {
-    id: translationPickerCard
+    id: translationPicker
 
-    visible: overlay.translationOpen
-    open: overlay.translationOpen
+    visible: page.translationOpen
+    open: page.translationOpen
     anchors.fill: parent
-    anchors.margins: Style.space(12)
     title: "Select Translation"
     countSuffix: "available"
     placeholder: "Search name, author, or language..."
-    closeName: "Close translation picker"
-    items: overlay.translations
-    selectedValue: overlay.selectedTranslation
+    closeName: "Back to settings"
+    items: page.translations
+    selectedValue: page.selectedTranslation
     valueOf: function(modelData) { return String(modelData.id) }
     titleOf: function(modelData) {
       return String(modelData.name || "Translation " + modelData.id)
@@ -67,60 +56,59 @@ Item {
     }
     tagOf: function(modelData) { return String(modelData.language || "").toUpperCase() }
     rowHeight: Style.space(52)
-    error: overlay.translationsError
-    hasCachedItems: overlay.translationCacheCount > 0
-    loading: overlay.translationsLoading && overlay.translationCacheCount === 0
+    error: page.translationsError
+    hasCachedItems: page.translationCacheCount > 0
+    loading: page.translationsLoading && page.translationCacheCount === 0
     loadingLabel: "Loading translations…"
-    emptyText: "No translations found matching \"" + overlay.translationSearchQuery + "\""
-    foreground: overlay.foreground
-    fontFamily: overlay.fontFamily
+    emptyText: "No translations found matching \"" + translationPicker.searchQuery + "\""
+    foreground: page.foreground
+    fontFamily: page.fontFamily
 
     onSelected: function(value) {
-      overlay.translationSelected(value)
+      page.translationSelected(value)
     }
-    onCloseRequested: overlay.closeRequested()
+    onCloseRequested: page.closeRequested()
     onSearchEdited: function(text) {
-      overlay.translationSearchEdited(text)
+      page.translationSearchEdited(text)
     }
   }
 
   SearchablePicker {
-    id: wbwPickerCard
+    id: wbwPicker
 
-    visible: overlay.wbwOpen
-    open: overlay.wbwOpen
+    visible: page.wbwOpen
+    open: page.wbwOpen
     anchors.fill: parent
-    anchors.margins: Style.space(12)
     title: "Word-by-Word Language"
     countSuffix: "verified languages"
     placeholder: "Search language name or code..."
-    closeName: "Close WBW language picker"
-    items: overlay.wbwLanguages
-    selectedValue: overlay.selectedWBWLanguage
+    closeName: "Back to settings"
+    items: page.wbwLanguages
+    selectedValue: page.selectedWBWLanguage
     valueOf: function(modelData) { return String(modelData.iso_code) }
     titleOf: function(modelData) {
       return String(modelData.name || modelData.iso_code)
     }
     secondaryOf: function(modelData) {
-      var native = (modelData.native_name && modelData.native_name !== modelData.name ? modelData.native_name + " • " : "")
-      return native + "ISO: " + modelData.iso_code
+      var nativeName = (modelData.native_name && modelData.native_name !== modelData.name ? modelData.native_name + " • " : "")
+      return nativeName + "ISO: " + modelData.iso_code
     }
     tagOf: function(modelData) { return String(modelData.iso_code || "").toUpperCase() }
     rowHeight: Style.space(48)
-    error: overlay.wbwError
-    hasCachedItems: overlay.wbwCacheCount > 0
-    loading: overlay.wbwLoading && overlay.wbwCacheCount === 0
+    error: page.wbwError
+    hasCachedItems: page.wbwCacheCount > 0
+    loading: page.wbwLoading && page.wbwCacheCount === 0
     loadingLabel: "Loading languages…"
-    emptyText: "No languages found matching \"" + overlay.wbwSearchQuery + "\""
-    foreground: overlay.foreground
-    fontFamily: overlay.fontFamily
+    emptyText: "No languages found matching \"" + wbwPicker.searchQuery + "\""
+    foreground: page.foreground
+    fontFamily: page.fontFamily
 
     onSelected: function(value) {
-      overlay.wbwSelected(value)
+      page.wbwSelected(value)
     }
-    onCloseRequested: overlay.closeRequested()
+    onCloseRequested: page.closeRequested()
     onSearchEdited: function(text) {
-      overlay.wbwSearchEdited(text)
+      page.wbwSearchEdited(text)
     }
   }
 }
