@@ -3,7 +3,7 @@ import qs.Commons
 import qs.Ui
 import ".."
 
-// Panel header: brand row on the left, playback status on the right.
+// Panel header: brand row on the left, playback status + settings on the right.
 Item {
   id: control
 
@@ -12,6 +12,8 @@ Item {
   property string title: "Peace"
   property string playbackStatus: ""
   property bool statusActive: false
+
+  signal settingsRequested()
 
   implicitHeight: brandRow.height
 
@@ -56,6 +58,19 @@ Item {
       color: Qt.darker(control.foreground, 1.5)
       font.family: control.fontFamily
       font.pixelSize: Style.font.caption
+    }
+
+    Button {
+      id: settingsButton
+
+      width: Style.space(32)
+      height: Style.space(32)
+      anchors.verticalCenter: parent.verticalCenter
+      iconText: "󰒓"
+      iconSize: Style.font.icon
+      tooltipText: "Settings"
+      Accessible.name: "Open settings"
+      onClicked: control.settingsRequested()
     }
   }
 }

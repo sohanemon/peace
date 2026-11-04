@@ -18,6 +18,7 @@ Panel {
   readonly property var barIdentity: hostWidget || root
   readonly property string peaceExecutable: decodeURIComponent(String(Qt.resolvedUrl("bin/peace")).replace(/^file:\/\//, ""))
   property var settings: hostWidget && hostWidget.settings ? hostWidget.settings : null
+  property bool settingsPageOpen: false
 
   PeaceModel {
     id: model
@@ -37,6 +38,7 @@ Panel {
 
   function close() {
     root.closePickers()
+    root.settingsPageOpen = false
     root.controller.hide()
   }
 
@@ -45,6 +47,16 @@ Panel {
       root.close()
     else
       root.open()
+  }
+
+  function openSettings() {
+    root.settingsPageOpen = true
+    keyCatcher.forceActiveFocus()
+  }
+
+  function closeSettings() {
+    root.settingsPageOpen = false
+    keyCatcher.forceActiveFocus()
   }
 
   function closeForPopoutSwitch() {
@@ -73,16 +85,18 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(430))
-    contentHeight: panel.fittedContentHeight(content.implicitHeight)
+    contentHeight: panel.fittedContentHeight(root.settingsPageOpen ? settingsPage.implicitHeight : content.implicitHeight)
 
     PanelKeyCatcher {
       id: keyCatcher
 
       anchors.fill: parent
-      blocked: recitationControls.blocksKeys || model.translationPickerOpen || model.wbwPickerOpen
+      blocked: recitationControls.blocksKeys || settingsPage.blocksKeys || model.translationPickerOpen || model.wbwPickerOpen
       onCloseRequested: {
         if (model.translationPickerOpen || model.wbwPickerOpen) {
           root.closePickers()
+        } else if (root.settingsPageOpen) {
+          root.closeSettings()
         } else {
           root.close()
         }
@@ -91,6 +105,7 @@ Panel {
       Column {
         id: content
 
+        visible: !root.settingsPageOpen
         width: parent.width
         spacing: Style.space(12)
 
@@ -101,6 +116,7 @@ Panel {
           title: "Peace"
           playbackStatus: model.playbackStatus
           statusActive: model.isPlaying || model.isPreparing
+          onSettingsRequested: root.openSettings()
         }
 
         PanelSeparator {
@@ -147,15 +163,6 @@ Panel {
             fontFamily: model.fontFamily
             reciterId: model.reciterID
             reciterOptions: model.reciterOptions
-            followEnabled: model.followEnabled
-            basmalaEnabled: model.basmalaEnabled
-            randomBackground: model.randomBackground
-            showTranslation: model.showTranslation
-            showWordTranslation: model.showWordTranslation
-            showReference: model.showReference
-            useThemeColors: model.useThemeColors
-            selectedTranslationName: model.selectedTranslationName
-            selectedWBWLanguageName: model.selectedWBWLanguageName
             referenceText: model.referenceText
             onReferenceEdited: function(text) {
               if (model.referenceText !== text)
@@ -164,17 +171,35 @@ Panel {
             onReciterSelected: function(value) {
               model.reciterID = value
             }
-            onFollowToggled: model.followEnabled = !model.followEnabled
-            onBasmalaToggled: model.basmalaEnabled = !model.basmalaEnabled
-            onRandomToggled: model.randomBackground = !model.randomBackground
-            onShowTranslationToggled: model.showTranslation = !model.showTranslation
-            onShowWordTranslationToggled: model.showWordTranslation = !model.showWordTranslation
-            onShowReferenceToggled: model.showReference = !model.showReference
-            onUseThemeColorsToggled: model.useThemeColors = !model.useThemeColors
-            onTranslationGearRequested: root.openTranslationPicker()
-            onWbwGearRequested: root.openWBWPicker()
           }
         }
+      }
+
+      SettingsPage {
+        id: settingsPage
+
+        visible: root.settingsPageOpen
+        foreground: model.foreground
+        fontFamily: model.fontFamily
+        followEnabled: model.followEnabled
+        basmalaEnabled: model.basmalaEnabled
+        randomBackground: model.randomBackground
+        showTranslation: model.showTranslation
+        showWordTranslation: model.showWordTranslation
+        showReference: model.showReference
+        useThemeColors: model.useThemeColors
+        selectedTranslationName: model.selectedTranslationName
+        selectedWBWLanguageName: model.selectedWBWLanguageName
+        onCloseRequested: root.closeSettings()
+        onFollowToggled: model.followEnabled = !model.followEnabled
+        onBasmalaToggled: model.basmalaEnabled = !model.basmalaEnabled
+        onRandomToggled: model.randomBackground = !model.randomBackground
+        onShowTranslationToggled: model.showTranslation = !model.showTranslation
+        onShowWordTranslationToggled: model.showWordTranslation = !model.showWordTranslation
+        onShowReferenceToggled: model.showReference = !model.showReference
+        onUseThemeColorsToggled: model.useThemeColors = !model.useThemeColors
+        onTranslationGearRequested: root.openTranslationPicker()
+        onWbwGearRequested: root.openWBWPicker()
       }
 
       PickerOverlay {
